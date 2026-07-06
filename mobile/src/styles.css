@@ -1,0 +1,93 @@
+* { box-sizing: border-box; margin: 0; }
+:root { --accent: #1f4fd8; --bg: #f5f6fa; --ink: #16192b; }
+html, body { height: 100%; }
+body {
+  font: 16px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--ink);
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; cursor: pointer; }
+.mono { font-family: ui-monospace, monospace; font-size: 0.92em; }
+.faint { color: #7a7f92; font-size: 13px; }
+.error { background: #fdf0f0; color: #b02a37; padding: 10px 14px; border-radius: 10px; margin: 10px 0; }
+.center { display: flex; align-items: center; justify-content: center; min-height: 40vh; }
+
+/* Standby: pure black = minimal OLED power; nothing else renders. */
+.standby {
+  position: fixed; inset: 0; background: #000; color: #2a2f45;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+}
+.standby-logo { font-size: 42px; font-weight: 800; opacity: 0.5; }
+.standby-hint { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.6; }
+
+/* Login */
+.login {
+  min-height: 100vh; display: flex; flex-direction: column; justify-content: center;
+  gap: 14px; padding: 32px; max-width: 380px; margin: 0 auto;
+}
+.login-logo, .standby-logo {
+  width: 64px; height: 64px; border-radius: 16px; background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 800;
+}
+.standby-logo { background: transparent; }
+.login h1 { font-size: 22px; }
+.login input {
+  padding: 14px; font-size: 17px; border: 1px solid #ccd2e0; border-radius: 12px;
+}
+.login button, .primary {
+  padding: 15px; border: 0; border-radius: 12px; background: var(--accent);
+  color: #fff; font-size: 16px; font-weight: 700; width: 100%;
+}
+.login button:disabled, .primary:disabled { opacity: 0.5; }
+
+/* Screens */
+.screen { padding: 14px 14px calc(24px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 6px 0 12px; }
+.brand { font-weight: 800; font-size: 20px; color: var(--accent); }
+.ghost { background: none; border: 0; font-size: 17px; color: var(--accent); padding: 6px; }
+h1 { font-size: 22px; margin-bottom: 10px; }
+
+.search {
+  width: 100%; padding: 12px 14px; font-size: 16px; border: 1px solid #d7dbe8;
+  border-radius: 12px; margin-bottom: 10px; background: #fff;
+}
+.chips { display: flex; gap: 8px; margin-bottom: 12px; overflow-x: auto; }
+.chip {
+  border: 1px solid #d7dbe8; background: #fff; border-radius: 999px; padding: 7px 14px;
+  font-size: 13px; white-space: nowrap; color: #555; text-transform: capitalize;
+}
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.row {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  background: #fff; border: 1px solid #e5e7ee; border-radius: 14px; padding: 13px 14px; margin-bottom: 9px;
+}
+.row-main { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.row-main span:nth-child(2) { font-weight: 600; }
+
+.pill {
+  font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px;
+  text-transform: capitalize; white-space: nowrap; background: #eee; color: #555;
+}
+.s-RESERVED { background: #ececf1; color: #555; }
+.s-POS_PENDING { background: #fdf3dc; color: #92600a; }
+.s-PAID { background: #e3ebfd; color: #1f4fd8; }
+.s-PICKED_UP { background: #efe6fb; color: #6d28d9; }
+.s-RETURNED { background: #d9f2ef; color: #0f766e; }
+.s-COMPLETED { background: #ddf3e4; color: #157347; }
+.s-CANCELLED { background: #fde3e3; color: #b02a37; }
+
+.card {
+  background: #fff; border: 1px solid #e5e7ee; border-radius: 14px;
+  padding: 14px; margin-bottom: 10px;
+}
+.checklist { margin-top: 4px; }
+.check {
+  display: flex; align-items: center; gap: 11px; padding: 9px 2px;
+  border-bottom: 1px solid #f0f1f6; font-size: 15px;
+}
+.check:last-child { border-bottom: 0; }
+.check input { width: 21px; height: 21px; accent-color: var(--accent); flex-shrink: 0; }
+.check span:nth-child(2) { flex: 1; }
+.check.done span:nth-child(2) { color: #8a8fa3; text-decoration: line-through; }
+.signed { color: #157347; font-weight: 700; }

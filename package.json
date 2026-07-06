@@ -5,11 +5,12 @@
   "type": "module",
   "description": "Gosselin Booking Desk — rentals & course bookings app: Shopify-native storefront widget, staff store view pushing to LS Retail POS, NAV LS Activity integration.",
   "scripts": {
-    "dev": "concurrently -n server,web -c blue,magenta \"npm run dev:server\" \"npm run dev:web\"",
+    "dev": "concurrently -n server,web,mobile -c blue,magenta,green \"npm run dev:server\" \"npm run dev:web\" \"npm run dev:mobile\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite web",
-    "build": "vite build web && tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "dev:mobile": "vite mobile",
+    "build": "vite build web && vite build mobile && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit && tsc -p mobile/tsconfig.json --noEmit",
     "start": "NODE_ENV=production tsx server/index.ts"
   },
   "dependencies": {

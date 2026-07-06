@@ -37,10 +37,17 @@ app.use("/sign", signRouter);   // public: customer e-signature (token-authentic
 
 startRetentionSchedule();
 
-// Production: serve the built admin SPA.
+// Production: serve the built SPAs — staff mobile app at /m, admin everywhere else.
 const dist = path.join(__dirname, "..", "web", "dist");
+const mobileDist = path.join(__dirname, "..", "mobile", "dist");
+app.use("/m", express.static(mobileDist));
+app.get(/^\/m(\/.*)?$/, (_req, res) => {
+  res.sendFile(path.join(mobileDist, "index.html"), (err) => {
+    if (err) res.status(200).send("Staff mobile app not built yet — run: npx vite build mobile (dev: http://localhost:5647).");
+  });
+});
 app.use(express.static(dist));
-app.get(/^\/(?!api|proxy|print|webhooks).*/, (_req, res) => {
+app.get(/^\/(?!api|proxy|print|sign|webhooks|m\b).*/, (_req, res) => {
   res.sendFile(path.join(dist, "index.html"), (err) => {
     if (err) res.status(200).send("Booking Desk API is running. In dev, the admin UI is on http://localhost:5646.");
   });

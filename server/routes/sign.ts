@@ -20,6 +20,12 @@ signRouter.get("/:token", (req, res) => {
   if (!b) return res.status(404).send(page("Link expired", "<h1>Link expired</h1><p>This signing link is no longer valid. Please contact the store.</p>"));
   if (b.contractSignedAt) return res.send(page("Already signed", `<h1>All set!</h1><p>This contract was signed on ${new Date(b.contractSignedAt).toLocaleString("en-CA")}. See you at pick-up.</p>`));
 
+  // Optional same-origin return path (the staff mobile app hands the phone to
+  // the customer and wants to land back in the app after signing).
+  const ret = /^\/[\w\-/]*$/.test(String(req.query.return ?? "")) ? String(req.query.return) : "";
+  const doneHtml = ret
+    ? `"<h1 style='font-family:sans-serif;text-align:center;margin-top:80px'>Thank you! ✓</h1><p style='text-align:center;font-family:sans-serif'><a href='${ret}' style='color:#1f4fd8;font-size:18px'>Hand the phone back to staff →</a></p>"`
+    : `"<h1 style='font-family:sans-serif;text-align:center;margin-top:80px'>Thank you! ✓</h1><p style='text-align:center;font-family:sans-serif'>Your contract is signed. See you at pick-up.</p>"`;
   const padUi = `
     <h2>Sign here</h2>
     <p class="small">By signing you agree to the rental terms above.</p>
@@ -60,7 +66,7 @@ signRouter.get("/:token", (req, res) => {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: document.getElementById("sig-name").value, image: canvas.toDataURL("image/png") }),
         }).then(function (r) { return r.json(); }).then(function (d) {
-          if (d.ok) { document.body.innerHTML = "<h1 style='font-family:sans-serif;text-align:center;margin-top:80px'>Thank you! ✓</h1><p style='text-align:center;font-family:sans-serif'>Your contract is signed. See you at pick-up.</p>"; }
+          if (d.ok) { document.body.innerHTML = ${doneHtml}; }
           else { document.getElementById("sig-status").textContent = d.error || "Something went wrong"; submit.disabled = false; submit.textContent = "Sign contract"; }
         });
       };

@@ -12,15 +12,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: npm install
-      - name: Typecheck server + web
+      - name: Typecheck server + web + mobile
         run: npm run typecheck
       - name: Build admin SPA
         run: npx vite build web
+      - name: Build staff mobile app
+        run: npx vite build mobile
       - name: Smoke-boot API
         run: |
           node --version
