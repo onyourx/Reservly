@@ -1,0 +1,28 @@
+# CI for the standalone Reservly repo (this directory is exported to
+# github.com/onyourx/Reservly via `git subtree split --prefix=apps/booking`).
+# npm (not pnpm) on purpose: the split repo has no workspace/lockfile and npm
+# runs the native build scripts (better-sqlite3, esbuild) without a gate.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Typecheck server + web
+        run: npm run typecheck
+      - name: Build admin SPA
+        run: npx vite build web
+      - name: Smoke-boot API
+        run: |
+          node --version
+          (npx tsx server/index.ts &) && sleep 4
+          curl -sf localhost:4646/api/health
