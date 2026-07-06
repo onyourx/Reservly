@@ -8,6 +8,7 @@ import { catalogRouter } from "./routes/catalog.js";
 import { bookingRouter } from "./routes/booking.js";
 import { settingsRouter, shopifyRouter, proxyRouter } from "./routes/integration.js";
 import { printRouter } from "./routes/print.js";
+import { signRouter } from "./routes/sign.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4646);
@@ -32,6 +33,7 @@ app.use("/api", catalogRouter);
 app.use("/api", bookingRouter);
 app.use("/proxy", proxyRouter); // Shopify App Proxy target (storefront widget)
 app.use("/print", printRouter);
+app.use("/sign", signRouter);   // public: customer e-signature (token-authenticated)
 
 startRetentionSchedule();
 

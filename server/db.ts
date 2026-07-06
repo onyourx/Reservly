@@ -178,6 +178,16 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS webhooks (            -- outbound subscriptions (Conduit & friends)
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL DEFAULT '*',              -- '*' or JSON array of event types (booking.created, …)
+  secret TEXT DEFAULT '',                        -- HMAC-SHA256 of body → X-Booking-Signature
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  last_status TEXT DEFAULT ''                    -- e.g. "200 @ 2026-07-06T…" or error text
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (          -- access log for personal data (privacy declaration: "log access")
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   at TEXT NOT NULL,
@@ -187,6 +197,20 @@ CREATE TABLE IF NOT EXISTS audit_log (          -- access log for personal data 
   detail TEXT NOT NULL DEFAULT ''
 );
 `);
+
+// Post-v1 columns (idempotent migrations for existing databases).
+for (const stmt of [
+  "ALTER TABLE booking_lines ADD COLUMN checklist TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE bookings ADD COLUMN sign_token TEXT DEFAULT ''",
+  "ALTER TABLE bookings ADD COLUMN signature_png TEXT DEFAULT ''",
+  "ALTER TABLE bookings ADD COLUMN signature_name TEXT DEFAULT ''",
+]) {
+  try {
+    db.exec(stmt);
+  } catch {
+    /* column already exists */
+  }
+}
 
 const SETTING_DEFAULTS: Record<string, string> = {
   navMode: process.env.NAV_BASE_URL ? "live" : "mock",
@@ -206,6 +230,8 @@ const SETTING_DEFAULTS: Record<string, string> = {
   idRetentionDays: "30",
   dataRetentionDays: "730",
   adminPasswordHash: "",
+  publicUrl: process.env.PUBLIC_URL || "", // base for customer-facing links (e-signature)
+  contractTemplate: "",                    // custom contract HTML with {{placeholders}}; empty = built-in
 };
 
 export function getSettings(): Record<string, string> {

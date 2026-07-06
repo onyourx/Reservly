@@ -8,7 +8,7 @@
 // RESERVED until reconciliation.
 import { Router, raw } from "express";
 import crypto from "node:crypto";
-import { db, getSettings, putSettings, pj, auditLog } from "../db.js";
+import { db, getSettings, putSettings, pj, auditLog, uid, now } from "../db.js";
 import { navMode } from "../lib/nav.js";
 import { ensureMetafieldDefinitions } from "../lib/shopifyAdmin.js";
 import { authRequired, isAuthenticated, login, logout, setAdminPassword } from "../lib/auth.js";
@@ -23,7 +23,7 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays"];
+const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate"];
 
 settingsRouter.get("/health", (_req, res) => {
   res.json({
@@ -75,6 +75,36 @@ settingsRouter.post("/privacy/redact", (req, res) => {
 
 settingsRouter.post("/privacy/sweep", (_req, res) => {
   res.json(sweepRetention());
+});
+
+// --- Outbound webhooks (booking.* events → Conduit / external systems) ----------
+
+settingsRouter.get("/webhooks", (_req, res) => {
+  const rows = db.prepare("SELECT id, url, events, active, created_at, last_status, CASE WHEN secret != '' THEN 1 ELSE 0 END AS has_secret FROM webhooks ORDER BY created_at").all() as any[];
+  res.json({ webhooks: rows.map((w) => ({ id: w.id, url: w.url, events: w.events === "*" ? ["*"] : pj(w.events, ["*"]), active: !!w.active, createdAt: w.created_at, lastStatus: w.last_status, hasSecret: !!w.has_secret })) });
+});
+
+settingsRouter.post("/webhooks", (req, res) => {
+  const { url, events, secret } = req.body ?? {};
+  if (!/^https?:\/\//.test(String(url ?? ""))) return res.status(400).json({ error: "A valid http(s) url is required" });
+  const id = uid();
+  const eventsVal = Array.isArray(events) && events.length && !events.includes("*") ? JSON.stringify(events) : "*";
+  db.prepare("INSERT INTO webhooks (id, url, events, secret, active, created_at) VALUES (?, ?, ?, ?, 1, ?)").run(id, String(url), eventsVal, String(secret ?? ""), now());
+  auditLog("webhook.created", String(url));
+  res.json({ id });
+});
+
+settingsRouter.delete("/webhooks/:id", (req, res) => {
+  db.prepare("DELETE FROM webhooks WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+settingsRouter.post("/webhooks/:id/test", async (req, res) => {
+  const hook = db.prepare("SELECT * FROM webhooks WHERE id = ?").get(req.params.id) as any;
+  if (!hook) return res.status(404).json({ error: "Webhook not found" });
+  const { dispatchWebhooks } = await import("../lib/webhooks.js");
+  dispatchWebhooks("booking.test", { bookingId: null, detail: { ping: true }, booking: null });
+  res.json({ ok: true, note: "test event dispatched; lastStatus updates shortly" });
 });
 
 settingsRouter.get("/audit", (req, res) => {

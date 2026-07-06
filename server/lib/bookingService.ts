@@ -94,14 +94,30 @@ export async function createBooking(input: {
 export function serializeBooking(id: string) {
   const b = db.prepare("SELECT * FROM bookings WHERE id = ? OR ref = ?").get(id, id) as any;
   if (!b) return null;
-  const lines = (db.prepare("SELECT * FROM booking_lines WHERE booking_id = ? ORDER BY rowid").all(b.id) as any[]).map((l) => ({
-    id: l.id, type: l.type, productNo: l.product_no, productName: l.product_name,
-    sessionId: l.session_id, storeId: l.store_id, from: l.date_from, to: l.date_to,
-    qty: l.qty, days: l.days, unitPrice: l.unit_price, lineTotal: l.line_total,
-    deposit: l.deposit, status: l.status, activityNo: l.activity_no, bookingRef: l.booking_ref,
-    sellingItem: l.selling_item, inspectionOut: l.inspection_out, inspectionIn: l.inspection_in,
-    damages: pj(l.damages, [] as any[]),
-  }));
+  const lines = (db.prepare("SELECT * FROM booking_lines WHERE booking_id = ? ORDER BY rowid").all(b.id) as any[]).map((l) => {
+    // Stored checklist wins; otherwise derive one from the product's kit so
+    // staff always have something to tick off at pickup (R8-R11).
+    let checklist = pj<{ itemNo: string; description: string; qty: number; checked: boolean }[]>(l.checklist, []);
+    if (!checklist.length && l.type === "RENTAL") {
+      const kit = db.prepare(
+        `SELECT k.item_no AS itemNo, k.description, k.qty FROM product_kit_items k
+         JOIN products p ON p.id = k.product_id WHERE p.product_no = ?`,
+      ).all(l.product_no) as { itemNo: string; description: string; qty: number }[];
+      checklist = [
+        { itemNo: l.product_no, description: `${l.product_name} (main unit)`, qty: l.qty, checked: false },
+        ...kit.map((k) => ({ ...k, qty: k.qty * l.qty, checked: false })),
+      ];
+    }
+    return {
+      id: l.id, type: l.type, productNo: l.product_no, productName: l.product_name,
+      sessionId: l.session_id, storeId: l.store_id, from: l.date_from, to: l.date_to,
+      qty: l.qty, days: l.days, unitPrice: l.unit_price, lineTotal: l.line_total,
+      deposit: l.deposit, status: l.status, activityNo: l.activity_no, bookingRef: l.booking_ref,
+      sellingItem: l.selling_item, inspectionOut: l.inspection_out, inspectionIn: l.inspection_in,
+      damages: pj(l.damages, [] as any[]),
+      checklist,
+    };
+  });
   const events = (db.prepare("SELECT * FROM events WHERE booking_id = ? ORDER BY id DESC LIMIT 50").all(b.id) as any[]).map((e) => ({
     at: e.at, type: e.type, detail: pj(e.detail, {}),
   }));
@@ -115,7 +131,9 @@ export function serializeBooking(id: string) {
     refundDue: b.refund_due, currency: b.currency, posReceiptNo: b.pos_receipt_no,
     shopifyOrderId: b.shopify_order_id, shopifyOrderName: b.shopify_order_name,
     idOnFile: !!b.id_encrypted, idLast4: b.id_encrypted ? idLast4(b.id_encrypted) : "",
-    contractSignedAt: b.contract_signed_at, notes: b.notes, createdAt: b.created_at, events,
+    contractSignedAt: b.contract_signed_at, signatureName: b.signature_name || "",
+    signaturePending: Boolean(b.sign_token) && !b.contract_signed_at,
+    notes: b.notes, createdAt: b.created_at, events,
     navRefs: lines.filter((l) => l.activityNo).map((l) => ({
       lineId: l.id, activityNo: l.activityNo, bookingRef: l.bookingRef, sellingItem: l.sellingItem,
     })),

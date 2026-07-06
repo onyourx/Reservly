@@ -16,10 +16,15 @@ const EMPTY: Settings = {
   posStaffId: "",
   idRetentionDays: "30",
   dataRetentionDays: "730",
+  publicUrl: "",
+  contractTemplate: "",
   navPassword: "",
   shopifyApiSecret: "",
   adminPassword: "",
 };
+
+const TEMPLATE_PLACEHOLDERS =
+  "{{ref}} {{customerName}} {{customerEmail}} {{customerPhone}} {{store}} {{createdAt}} {{lines}} {{subtotal}} {{deposit}} {{idLast4}} {{signature}} {{date}}";
 
 /** Secrets are write-only: send them only when the user typed a new value. */
 const WRITE_ONLY: (keyof Settings)[] = ["navPassword", "shopifyApiSecret", "adminPassword"];
@@ -34,6 +39,48 @@ export function SettingsPage() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [settingUp, setSettingUp] = useState(false);
+
+  type Hook = { id: string; url: string; events: string[]; active: boolean; lastStatus: string; hasSecret: boolean };
+  const [hooks, setHooks] = useState<Hook[]>([]);
+  const [hookUrl, setHookUrl] = useState("");
+  const [hookEvents, setHookEvents] = useState("*");
+  const [hookSecret, setHookSecret] = useState("");
+
+  const loadHooks = useCallback(() => {
+    api<{ webhooks: Hook[] }>("/api/webhooks").then((d) => setHooks(d.webhooks)).catch(() => setHooks([]));
+  }, []);
+  useEffect(loadHooks, [loadHooks]);
+
+  const addHook = async () => {
+    try {
+      await api("/api/webhooks", {
+        body: {
+          url: hookUrl,
+          events: hookEvents.trim() === "*" ? ["*"] : hookEvents.split(",").map((s) => s.trim()).filter(Boolean),
+          secret: hookSecret || undefined,
+        },
+      });
+      setHookUrl(""); setHookSecret("");
+      toast.success("Webhook added");
+      loadHooks();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to add webhook");
+    }
+  };
+
+  const deleteHook = async (hid: string) => {
+    await api(`/api/webhooks/${hid}`, { method: "DELETE" }).catch(() => {});
+    loadHooks();
+  };
+
+  const testHook = async (hid: string) => {
+    try {
+      await api(`/api/webhooks/${hid}/test`, { method: "POST" });
+      toast.success("Test event sent — refresh to see delivery status");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Test failed");
+    }
+  };
 
   const setupShopify = async () => {
     setSettingUp(true);
@@ -177,6 +224,14 @@ export function SettingsPage() {
                   placeholder="https://conduit.example.com"
                 />
               </Field>
+              <Field label="Public URL" hint="Base for customer-facing links (e-signature). In dev, your tunnel URL.">
+                <input
+                  type="url"
+                  value={settings.publicUrl}
+                  onChange={(e) => set("publicUrl", e.target.value)}
+                  placeholder="https://bookings.gosselin.ca"
+                />
+              </Field>
             </div>
           )}
         </div>
@@ -210,6 +265,56 @@ export function SettingsPage() {
                   />
                 </Field>
               </div>
+            )}
+          </div>
+
+          <div className="card">
+            <h2 className="card-title">Outbound webhooks</h2>
+            <div className="faint" style={{ marginBottom: 10 }}>
+              Every <span className="mono">booking.*</span> event is POSTed with the full booking
+              snapshot — point Conduit (or any system) here. Events: created, pos_pushed, reconciled,
+              picked_up, returned, completed, cancelled, signature_requested, contract_signed. Use
+              <span className="mono"> *</span> for all; bodies are HMAC-signed
+              (<span className="mono">X-Booking-Signature</span>) when a secret is set.
+            </div>
+            {hooks.map((h) => (
+              <div key={h.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #eef" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="mono" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{h.url}</div>
+                  <div className="faint" style={{ fontSize: 11 }}>
+                    {h.events.join(", ")}{h.hasSecret ? " · signed" : ""}{h.lastStatus ? ` · last: ${h.lastStatus}` : ""}
+                  </div>
+                </div>
+                <button type="button" className="btn btn-sm" onClick={() => void testHook(h.id)}>Test</button>
+                <button type="button" className="icon-btn" aria-label="Delete webhook" onClick={() => void deleteHook(h.id)}>×</button>
+              </div>
+            ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+              <input type="url" placeholder="https://conduit.example.com/api/pub/hooks/bookings" value={hookUrl} onChange={(e) => setHookUrl(e.target.value)} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="text" placeholder="Events (* or comma-separated)" value={hookEvents} onChange={(e) => setHookEvents(e.target.value)} style={{ flex: 1 }} />
+                <input type="password" placeholder="Secret (optional)" value={hookSecret} onChange={(e) => setHookSecret(e.target.value)} style={{ flex: 1 }} autoComplete="new-password" />
+              </div>
+              <button type="button" className="btn" disabled={!hookUrl} onClick={() => void addHook()}>Add webhook</button>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2 className="card-title">Contract template</h2>
+            <div className="faint" style={{ marginBottom: 8 }}>
+              Custom HTML for printed &amp; e-signed contracts. Leave empty for the built-in layout.
+              Placeholders: <span className="mono" style={{ fontSize: 11 }}>{TEMPLATE_PLACEHOLDERS}</span>
+            </div>
+            {loading ? (
+              <Skeleton rows={4} height={20} />
+            ) : (
+              <textarea
+                value={settings.contractTemplate}
+                onChange={(e) => set("contractTemplate", e.target.value)}
+                rows={10}
+                style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, width: "100%" }}
+                placeholder={"<h1>Rental Contract — {{ref}}</h1>\n<p>Customer: {{customerName}} ({{customerEmail}})</p>\n{{lines}}\n<p>Deposit: {{deposit}}</p>\n{{signature}}"}
+              />
             )}
           </div>
 

@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { db, now, j, localDate, auditLog } from "../db.js";
+import crypto from "node:crypto";
+import { db, now, j, localDate, auditLog, getSettings } from "../db.js";
 import { quoteLines, round2 } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots } from "../engine/availability.js";
 import { createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
@@ -117,6 +118,42 @@ bookingRouter.post("/bookings/:id/reconcile", (req, res) => {
       .run(posTotal, String(req.body?.receiptNo ?? ""), now(), b.id);
     emit(b.id, "booking.reconciled", { posTotal, originalTotal: b.total });
     res.json({ booking: serializeBooking(b.id) });
+  } catch (err: any) {
+    res.status(err.status ?? 500).json({ error: String(err.message ?? err) });
+  }
+});
+
+/** R8-R11: staff tick off every kit item while preparing / handing over. */
+bookingRouter.put("/bookings/:id/checklist", (req, res) => {
+  try {
+    const b = mustGet(req.params.id);
+    const { lineId, items } = req.body ?? {};
+    if (!lineId || !Array.isArray(items)) return res.status(400).json({ error: "lineId and items[] are required" });
+    const line = db.prepare("SELECT id FROM booking_lines WHERE id = ? AND booking_id = ?").get(lineId, b.id);
+    if (!line) return res.status(404).json({ error: "Line not found" });
+    const clean = items.map((i: any) => ({
+      itemNo: String(i.itemNo ?? ""), description: String(i.description ?? ""),
+      qty: Number(i.qty) || 1, checked: Boolean(i.checked),
+    }));
+    db.prepare("UPDATE booking_lines SET checklist = ? WHERE id = ?").run(j(clean), lineId);
+    res.json({ booking: serializeBooking(b.id) });
+  } catch (err: any) {
+    res.status(err.status ?? 500).json({ error: String(err.message ?? err) });
+  }
+});
+
+/** E-signature: mint a one-time signing link; delivery (email) rides the event
+ *  stream → Conduit → HubSpot, and staff can copy/text the link directly. */
+bookingRouter.post("/bookings/:id/request-signature", (req, res) => {
+  try {
+    const b = mustGet(req.params.id);
+    const token = crypto.randomBytes(24).toString("base64url");
+    db.prepare("UPDATE bookings SET sign_token = ?, updated_at = ? WHERE id = ?").run(token, now(), b.id);
+    const base = (getSettings().publicUrl || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
+    const url = `${base}/sign/${token}`;
+    emit(b.id, "booking.signature_requested", { email: b.customer_email, url });
+    auditLog("signature.requested", b.ref, b.customer_email);
+    res.json({ url, booking: serializeBooking(b.id) });
   } catch (err: any) {
     res.status(err.status ?? 500).json({ error: String(err.message ?? err) });
   }

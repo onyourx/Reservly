@@ -4,7 +4,7 @@
 //   /print/daily             — morning batch: all of today's rental paperwork (R8)
 //   /print/confirmation/:id  — course booking confirmation (class step 16)
 import { Router } from "express";
-import { db, localDate } from "../db.js";
+import { db, localDate, getSettings } from "../db.js";
 import { serializeBooking } from "../lib/bookingService.js";
 
 export const printRouter = Router();
@@ -13,7 +13,7 @@ const esc = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g,
 const money = (n: number) => `CA$${(Number(n) || 0).toFixed(2)}`;
 const dt = (s: string) => (s ? new Date(s).toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" }) : "");
 
-function page(title: string, body: string): string {
+export function page(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
     body { font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; color: #111; margin: 40px auto; max-width: 760px; }
     h1 { font-size: 20px; border-bottom: 2px solid #111; padding-bottom: 8px; }
@@ -51,15 +51,54 @@ function kitRows(productNo: string): { itemNo: string; description: string; qty:
   ).all(productNo) as any[];
 }
 
-function contractBody(b: any): string {
+function signatureBlock(b: any): string {
+  const raw = db.prepare("SELECT signature_png, signature_name FROM bookings WHERE id = ?").get(b.id) as any;
+  if (b.contractSignedAt && raw?.signature_png) {
+    return `<div class="meta" style="margin-top:36px">
+      <div><b>Signed electronically by</b>${esc(raw.signature_name || b.customer.email)}<br>
+      <img src="${raw.signature_png.startsWith("data:image/png;base64,") ? raw.signature_png : ""}" alt="signature" style="max-height:80px;margin-top:6px;border-bottom:1px solid #999"></div>
+      <div><b>Date</b>${dt(b.contractSignedAt)}</div>
+      <div><b>Staff signature</b><div style="border-top:1px solid #111;margin-top:40px;width:180px"></div></div>
+    </div>`;
+  }
+  return `<div class="sig"><div>Customer signature</div><div>Staff signature</div><div>Date</div></div>`;
+}
+
+function linesTable(b: any): string {
   const rentals = b.lines.filter((l: any) => l.type === "RENTAL");
+  return `<table><tr><th>Equipment</th><th>From</th><th>To</th><th>Days</th><th>Qty</th><th>Total</th></tr>
+    ${rentals.map((l: any) => `<tr><td>${esc(l.productName)}<div class="small">${esc(l.productNo)} · NAV ${esc(l.activityNo || "-")}</div></td>
+      <td>${dt(l.from)}</td><td>${dt(l.to)}</td><td>${l.days ?? "-"}</td><td>${l.qty}</td><td>${money(l.lineTotal)}</td></tr>`).join("")}
+    </table>`;
+}
+
+/** Contract body — the Settings template (with {{placeholders}}) when present,
+ *  otherwise the built-in layout. Shared with the e-signature page. */
+export function contractBody(b: any): string {
+  const rentals = b.lines.filter((l: any) => l.type === "RENTAL");
+  const template = getSettings().contractTemplate?.trim();
+  if (template) {
+    const store = b.storeId ? (db.prepare("SELECT name, city FROM stores WHERE id = ?").get(b.storeId) as any) : null;
+    const values: Record<string, string> = {
+      ref: esc(b.ref),
+      customerName: esc(`${b.customer.firstName} ${b.customer.lastName}`.trim() || b.customer.email),
+      customerEmail: esc(b.customer.email),
+      customerPhone: esc(b.customer.phone),
+      store: esc(store ? `${store.name} (${store.city})` : ""),
+      createdAt: esc(dt(b.createdAt)),
+      lines: linesTable(b),
+      subtotal: money(b.subtotal),
+      deposit: money(b.deposit),
+      idLast4: b.idOnFile ? `…${esc(b.idLast4)}` : "not on file",
+      signature: signatureBlock(b),
+      date: esc(dt(new Date().toISOString())),
+    };
+    return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => values[key] ?? "");
+  }
   return `
     <h1>Rental Contract — ${esc(b.ref)}</h1>
     ${bookingHeader(b)}
-    <table><tr><th>Equipment</th><th>From</th><th>To</th><th>Days</th><th>Qty</th><th>Total</th></tr>
-    ${rentals.map((l: any) => `<tr><td>${esc(l.productName)}<div class="small">${esc(l.productNo)} · NAV ${esc(l.activityNo || "-")}</div></td>
-      <td>${dt(l.from)}</td><td>${dt(l.to)}</td><td>${l.days ?? "-"}</td><td>${l.qty}</td><td>${money(l.lineTotal)}</td></tr>`).join("")}
-    </table>
+    ${linesTable(b)}
     <div class="meta">
       <div><b>Rental total</b>${money(b.subtotal)}</div>
       <div><b>Security deposit</b>${money(b.deposit)}</div>
@@ -70,7 +109,7 @@ function contractBody(b: any): string {
     <p class="small">The customer acknowledges receiving the equipment listed above in the stated condition and agrees to
     return it by the end date. Late returns are billed per additional day. The deposit is refunded on return,
     less any charges for damage or missing items.</p>
-    <div class="sig"><div>Customer signature</div><div>Staff signature</div><div>Date</div></div>`;
+    ${signatureBlock(b)}`;
 }
 
 function packingBody(b: any): string {

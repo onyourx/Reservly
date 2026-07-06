@@ -175,6 +175,14 @@ export interface BookingLine {
   inspectionOut?: string;
   inspectionIn?: string;
   damages: DamageRow[];
+  checklist: ChecklistItem[];
+}
+
+export interface ChecklistItem {
+  itemNo: string;
+  description: string;
+  qty: number;
+  checked: boolean;
 }
 
 export interface BookingEvent {
@@ -211,7 +219,10 @@ export interface Booking {
   shopifyOrderId: string | null;
   shopifyOrderName: string | null;
   idOnFile: boolean;
+  idLast4?: string;
   contractSignedAt: string | null;
+  signatureName?: string;
+  signaturePending?: boolean;
   notes: string;
   createdAt: string;
   events: BookingEvent[];
@@ -248,6 +259,8 @@ export interface Settings {
   posStaffId: string;
   idRetentionDays: string;
   dataRetentionDays: string;
+  publicUrl: string;
+  contractTemplate: string;
   /** Write-only: accepted on PUT, never returned by GET. */
   navPassword?: string;
   shopifyApiSecret?: string;

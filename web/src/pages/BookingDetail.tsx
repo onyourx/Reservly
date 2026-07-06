@@ -66,6 +66,35 @@ export function BookingDetail() {
     }
   };
 
+  const requestSignature = async () => {
+    setActing("signature");
+    try {
+      const d = await api<{ url: string }>(`/api/bookings/${id}/request-signature`, { method: "POST" });
+      await navigator.clipboard.writeText(d.url).catch(() => {});
+      toast.success("Signing link created & copied — emailed to the customer via HubSpot, or text/show it directly");
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create signing link");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const toggleChecklistItem = async (lineId: string, itemNo: string) => {
+    if (!booking) return;
+    const line = booking.lines.find((l) => l.id === lineId);
+    if (!line) return;
+    const items = line.checklist.map((c) => (c.itemNo === itemNo ? { ...c, checked: !c.checked } : c));
+    // optimistic update
+    setBooking({ ...booking, lines: booking.lines.map((l) => (l.id === lineId ? { ...l, checklist: items } : l)) });
+    try {
+      await api(`/api/bookings/${id}/checklist`, { method: "PUT", body: { lineId, items } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Checklist save failed");
+      load();
+    }
+  };
+
   if (loading) {
     return (
       <div className="page">
@@ -158,6 +187,14 @@ export function BookingDetail() {
                 <span className="badge">On file</span>
               </div>
             )}
+            {(b.contractSignedAt || b.signaturePending) && (
+              <div className="meta-item">
+                <span className="meta-label">Contract</span>
+                <span className="badge">
+                  {b.contractSignedAt ? `Signed${b.signatureName ? ` — ${b.signatureName}` : ""}` : "Awaiting signature"}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -234,7 +271,53 @@ export function BookingDetail() {
             Print confirmation
           </a>
         )}
+        {hasRentals && active && !b.contractSignedAt && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={acting !== null}
+            onClick={() => void requestSignature()}
+          >
+            {acting === "signature" && <Spinner small />} Request e-signature
+          </button>
+        )}
       </div>
+
+      {hasRentals && active && (
+        <div className="card" style={{ marginBottom: 18 }}>
+          <h2 className="card-title">Packing checklist</h2>
+          <div className="faint" style={{ marginBottom: 10 }}>
+            Tick every item while preparing the kit and checking it with the customer.
+          </div>
+          {b.lines
+            .filter((l) => l.type === "RENTAL")
+            .map((l) => {
+              const done = l.checklist.filter((c) => c.checked).length;
+              return (
+                <div key={l.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <strong>{l.productName}</strong>
+                    <span className={done === l.checklist.length ? "avail avail-ok" : "muted"}>
+                      {done}/{l.checklist.length} checked
+                    </span>
+                  </div>
+                  {l.checklist.map((c) => (
+                    <label key={c.itemNo} className="checkbox-row" style={{ display: "flex", padding: "3px 0" }}>
+                      <input
+                        type="checkbox"
+                        checked={c.checked}
+                        onChange={() => void toggleChecklistItem(l.id, c.itemNo)}
+                      />
+                      <span className="mono" style={{ width: 110 }}>{c.itemNo}</span>
+                      <span style={{ flex: 1 }}>{c.description}</span>
+                      <span className="muted">× {c.qty}</span>
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
+        </div>
+      )}
 
       <div className="card">
         <h2 className="card-title">Lines</h2>
@@ -383,6 +466,24 @@ export function BookingDetail() {
             </>
           }
         >
+          {(() => {
+            const rentalLines = b.lines.filter((l) => l.type === "RENTAL");
+            const unchecked = rentalLines.reduce((a, l) => a + l.checklist.filter((c) => !c.checked).length, 0);
+            return (
+              <>
+                {unchecked > 0 && (
+                  <div className="error-note" style={{ marginBottom: 10 }}>
+                    Packing checklist incomplete — {unchecked} item{unchecked > 1 ? "s" : ""} not checked.
+                  </div>
+                )}
+                {!b.contractSignedAt && (
+                  <div className="error-note" style={{ marginBottom: 10 }}>
+                    Contract not e-signed — get a paper signature or send the signing link before handover.
+                  </div>
+                )}
+              </>
+            );
+          })()}
           <Field label="ID number" hint="Stored encrypted at rest — never shown again in full.">
             <input
               type="text"
