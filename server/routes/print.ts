@@ -16,11 +16,11 @@ const dt = (s: string) => (s ? new Date(s).toLocaleString("en-CA", { dateStyle: 
 export function page(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>
     body { font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; color: #111; margin: 40px auto; max-width: 760px; }
-    h1 { font-size: 20px; border-bottom: 2px solid #111; padding-bottom: 8px; }
+    h1 { font-size: 20px; border-bottom: 3px solid #12A46B; padding-bottom: 8px; }
     h2 { font-size: 15px; margin-top: 28px; }
     table { width: 100%; border-collapse: collapse; margin: 12px 0; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; }
-    th { background: #f5f5f5; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    th { background: #E4F6EE; color: #0E7A50; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
     .meta { display: flex; gap: 32px; flex-wrap: wrap; margin: 16px 0; }
     .meta div b { display: block; font-size: 11px; text-transform: uppercase; color: #666; }
     .sig { margin-top: 48px; display: flex; gap: 48px; }

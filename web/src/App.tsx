@@ -1,5 +1,6 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
+import { LogoMark } from "./components/Logo";
 import { AuthGate } from "./components/AuthGate";
 import { StoreProvider, useStores } from "./components/StoreContext";
 import { Dashboard } from "./pages/Dashboard";
@@ -60,10 +61,10 @@ function Shell() {
     <div className="app">
       <aside className="sidebar">
         <div className="logo">
-          <span className="logo-mark">BD</span>
+          <LogoMark size={34} />
           <span className="logo-text">
-            Booking Desk
-            <small>Gosselin</small>
+            Reservly
+            <small>Booking Desk</small>
           </span>
         </div>
         <nav className="nav">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { Spinner } from "./ui";
+import { LogoMark } from "./Logo";
 
 /** Blocks the app behind the staff password when one is configured; also
  *  re-locks when any API call comes back 401 (session expiry). */
@@ -51,10 +52,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <div className="login-screen">
         <form className="login-card" onSubmit={(e) => void submit(e)}>
           <div className="logo" style={{ marginBottom: 16 }}>
-            <span className="logo-mark">BD</span>
+            <LogoMark size={40} />
             <span className="logo-text">
-              Booking Desk
-              <small>Gosselin</small>
+              Reservly
+              <small>Booking Desk</small>
             </span>
           </div>
           <input

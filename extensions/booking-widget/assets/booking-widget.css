@@ -1,6 +1,6 @@
 .gsl-booking {
-  --gsl-accent: #1f4fd8;
-  --gsl-accent-soft: #eef2fd;
+  --gsl-accent: #12A46B;
+  --gsl-accent-soft: #E4F6EE;
   --gsl-border: #e5e7ee;
   border: 1px solid var(--gsl-border);
   border-radius: 14px;
@@ -93,7 +93,7 @@
   transition: filter 0.12s;
 }
 .gsl-add:hover:not(:disabled) { filter: brightness(1.08); }
-.gsl-add:disabled { background: #c3cbe8; cursor: not-allowed; }
+.gsl-add:disabled { background: #b9c8c0; cursor: not-allowed; }
 
 @media (max-width: 480px) {
   .gsl-booking { padding: 16px; }

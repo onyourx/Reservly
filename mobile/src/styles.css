@@ -1,13 +1,13 @@
 * { box-sizing: border-box; margin: 0; }
-:root { --accent: #1f4fd8; --bg: #f5f6fa; --ink: #16192b; }
+:root { --accent: #12A46B; --accent-deep: #0E7A50; --tint: #E4F6EE; --bg: #F4F4F2; --ink: #16181D; }
 html, body { height: 100%; }
 body {
-  font: 16px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 16px/1.45 "Space Grotesk", -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--ink);
   -webkit-tap-highlight-color: transparent;
 }
 button { font: inherit; cursor: pointer; }
-.mono { font-family: ui-monospace, monospace; font-size: 0.92em; }
+.mono { font-family: "Space Mono", ui-monospace, monospace; font-size: 0.92em; }
 .faint { color: #7a7f92; font-size: 13px; }
 .error { background: #fdf0f0; color: #b02a37; padding: 10px 14px; border-radius: 10px; margin: 10px 0; }
 .center { display: flex; align-items: center; justify-content: center; min-height: 40vh; }
@@ -71,7 +71,7 @@ h1 { font-size: 22px; margin-bottom: 10px; }
 }
 .s-RESERVED { background: #ececf1; color: #555; }
 .s-POS_PENDING { background: #fdf3dc; color: #92600a; }
-.s-PAID { background: #e3ebfd; color: #1f4fd8; }
+.s-PAID { background: #e3ebfd; color: #12A46B; }
 .s-PICKED_UP { background: #efe6fb; color: #6d28d9; }
 .s-RETURNED { background: #d9f2ef; color: #0f766e; }
 .s-COMPLETED { background: #ddf3e4; color: #157347; }

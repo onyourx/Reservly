@@ -1,20 +1,20 @@
-/* Gosselin Booking Desk — light admin theme, single accent #1f4fd8 */
+/* Reservly Booking Desk — brand book v1.0: Emerald on Paper, Space Grotesk/Mono */
 
 :root {
-  --accent: #1f4fd8;
-  --accent-soft: #e8edfb;
-  --accent-hover: #1a43b8;
-  --bg: #f6f7fa;
+  --accent: #12A46B;        /* Emerald — primary brand, CTAs */
+  --accent-soft: #E4F6EE;   /* Tint — highlights, panels */
+  --accent-hover: #0E7A50;  /* Deep — hover, text on tint */
+  --bg: #F4F4F2;            /* Paper */
   --surface: #ffffff;
-  --border: #e4e7ee;
-  --border-strong: #d4d9e3;
-  --text: #1c2333;
-  --text-soft: #5b6475;
-  --text-faint: #8b93a5;
-  --danger: #c53030;
+  --border: #e2e2dd;
+  --border-strong: #c9c9c4;
+  --text: #16181D;          /* Ink */
+  --text-soft: #5C5F58;     /* Slate */
+  --text-faint: #9A9D96;    /* Mist */
+  --danger: #C0392B;
   --danger-soft: #fdecec;
-  --ok: #157a5b;
-  --ok-soft: #e2f5ee;
+  --ok: #0E7A50;
+  --ok-soft: #E4F6EE;
   --radius: 10px;
   --radius-sm: 7px;
   --shadow: 0 1px 3px rgb(20 30 60 / 0.06), 0 4px 16px rgb(20 30 60 / 0.05);
@@ -31,8 +31,8 @@ body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.45;
   color: var(--text);
@@ -333,7 +333,7 @@ table.table {
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12.5px;
 }
 
@@ -352,7 +352,7 @@ table.table {
 
 .pill-gray   { background: #eef0f4; color: #4a5264; }
 .pill-amber  { background: #fdf1dc; color: #8a5a08; }
-.pill-blue   { background: #e4ebfc; color: #1f4fd8; }
+.pill-blue   { background: #e4ebfc; color: #12A46B; }
 .pill-purple { background: #efe6fb; color: #6d33c4; }
 .pill-teal   { background: #dcf4f1; color: #0d6e64; }
 .pill-green  { background: #e0f4e5; color: #1c7a34; }

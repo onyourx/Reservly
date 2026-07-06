@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fmtDT, money, type Booking, type ChecklistItem } from "./api";
 
+function LogoMark({ size = 64, muted = false }: { size?: number; muted?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 96 96" aria-hidden="true" style={muted ? { opacity: 0.45 } : undefined}>
+      <rect width="96" height="96" rx="21" fill={muted ? "#1c1f1d" : "#12A46B"} />
+      <rect x="18" y="28" width="60" height="17" rx="8.5" fill="#fff" fillOpacity="0.38" />
+      <rect x="18" y="51" width="60" height="17" rx="8.5" fill="#fff" />
+      <path d="M30 59.5 L36.5 66 L49 53.5" stroke={muted ? "#1c1f1d" : "#12A46B"} strokeWidth="5.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 const STANDBY_AFTER_MS = 5 * 60 * 1000; // requirement: standby after 5 min idle
 
 /** Idle tracker: any interaction resets the clock; going to a hidden tab counts
@@ -60,7 +71,7 @@ export function App() {
           checkAuth(); // session may have expired while asleep
         }}
       >
-        <div className="standby-logo">R</div>
+        <LogoMark size={56} muted />
         <div className="standby-hint">Tap to resume</div>
       </div>
     );
@@ -93,7 +104,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   };
   return (
     <form className="login" onSubmit={(e) => void submit(e)}>
-      <div className="login-logo">R</div>
+      <LogoMark size={64} />
       <h1>Reservly Staff</h1>
       <input
         type="password"

@@ -24,7 +24,7 @@ signRouter.get("/:token", (req, res) => {
   // the customer and wants to land back in the app after signing).
   const ret = /^\/[\w\-/]*$/.test(String(req.query.return ?? "")) ? String(req.query.return) : "";
   const doneHtml = ret
-    ? `"<h1 style='font-family:sans-serif;text-align:center;margin-top:80px'>Thank you! ✓</h1><p style='text-align:center;font-family:sans-serif'><a href='${ret}' style='color:#1f4fd8;font-size:18px'>Hand the phone back to staff →</a></p>"`
+    ? `"<h1 style='font-family:sans-serif;text-align:center;margin-top:80px'>Thank you! ✓</h1><p style='text-align:center;font-family:sans-serif'><a href='${ret}' style='color:#12A46B;font-size:18px'>Hand the phone back to staff →</a></p>"`
     : `"<h1 style='font-family:sans-serif;text-align:center;margin-top:80px'>Thank you! ✓</h1><p style='text-align:center;font-family:sans-serif'>Your contract is signed. See you at pick-up.</p>"`;
   const padUi = `
     <h2>Sign here</h2>
@@ -36,7 +36,7 @@ signRouter.get("/:token", (req, res) => {
       style="width:100%;height:180px;border:2px dashed #bbb;border-radius:10px;touch-action:none;background:#fff"></canvas>
     <div style="display:flex;gap:10px;margin-top:12px">
       <button id="sig-clear" style="flex:1;padding:14px;border:1px solid #ccc;border-radius:10px;background:#fff;font-size:15px">Clear</button>
-      <button id="sig-submit" style="flex:2;padding:14px;border:0;border-radius:10px;background:#1f4fd8;color:#fff;font-size:15px;font-weight:700" disabled>Sign contract</button>
+      <button id="sig-submit" style="flex:2;padding:14px;border:0;border-radius:10px;background:#12A46B;color:#fff;font-size:15px;font-weight:700" disabled>Sign contract</button>
     </div>
     <p id="sig-status" class="small"></p>
     <script>
