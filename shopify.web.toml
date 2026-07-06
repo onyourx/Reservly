@@ -1,0 +1,7 @@
+# Tells `shopify app dev` how to run the booking backend. The CLI injects PORT and
+# tunnels a public URL to it, so webhooks + app proxy work against your dev store
+# without deploying anything.
+roles = ["backend"]
+
+[commands]
+dev = "npm run dev:server"

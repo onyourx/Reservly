@@ -239,11 +239,16 @@ export interface DashboardData {
 export interface Settings {
   navBaseUrl: string;
   navMode: "mock" | "live";
+  navUsername: string;
+  navDomain: string;
   shopifyShop: string;
   conduitUrl: string;
   posStoreId: string;
   posTerminalId: string;
   posStaffId: string;
+  /** Write-only: accepted on PUT, never returned by GET. */
+  navPassword?: string;
+  shopifyApiSecret?: string;
 }
 
 export interface ApiOptions {

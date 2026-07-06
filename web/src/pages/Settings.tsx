@@ -7,12 +7,19 @@ import { ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
 const EMPTY: Settings = {
   navBaseUrl: "",
   navMode: "mock",
+  navUsername: "",
+  navDomain: "",
   shopifyShop: "",
   conduitUrl: "",
   posStoreId: "",
   posTerminalId: "",
   posStaffId: "",
+  navPassword: "",
+  shopifyApiSecret: "",
 };
+
+/** Secrets are write-only: send them only when the user typed a new value. */
+const WRITE_ONLY: (keyof Settings)[] = ["navPassword", "shopifyApiSecret"];
 
 export function SettingsPage() {
   const toast = useToast();
@@ -47,9 +54,11 @@ export function SettingsPage() {
   const save = async () => {
     setSaving(true);
     try {
+      const body: Partial<Settings> = { ...settings };
+      for (const key of WRITE_ONLY) if (!body[key]) delete body[key];
       const { settings: updated } = await api<{ settings: Partial<Settings> }>("/api/settings", {
         method: "PUT",
-        body: settings,
+        body,
       });
       setSettings({ ...EMPTY, ...updated });
       toast.success("Settings saved");
@@ -103,12 +112,45 @@ export function SettingsPage() {
                   <option value="live">live</option>
                 </select>
               </Field>
+              <Field label="NAV username">
+                <input
+                  type="text"
+                  value={settings.navUsername}
+                  onChange={(e) => set("navUsername", e.target.value)}
+                  placeholder="WEBSERVICE"
+                />
+              </Field>
+              <Field label="NAV domain">
+                <input
+                  type="text"
+                  value={settings.navDomain}
+                  onChange={(e) => set("navDomain", e.target.value)}
+                  placeholder="GOSSELIN"
+                />
+              </Field>
+              <Field label="NAV password (write-only, blank = unchanged)">
+                <input
+                  type="password"
+                  value={settings.navPassword ?? ""}
+                  onChange={(e) => set("navPassword", e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
               <Field label="Shopify shop">
                 <input
                   type="text"
                   value={settings.shopifyShop}
                   onChange={(e) => set("shopifyShop", e.target.value)}
                   placeholder="my-shop.myshopify.com"
+                />
+              </Field>
+              <Field label="Shopify API secret (write-only, blank = unchanged)">
+                <input
+                  type="password"
+                  value={settings.shopifyApiSecret ?? ""}
+                  onChange={(e) => set("shopifyApiSecret", e.target.value)}
+                  placeholder="Partner dashboard → app → Client secret"
+                  autoComplete="new-password"
                 />
               </Field>
               <Field label="Conduit URL">

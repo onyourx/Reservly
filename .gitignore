@@ -1,4 +1,6 @@
 node_modules/
+.shopify/
+.env
 booking.db
 booking.db-shm
 booking.db-wal
