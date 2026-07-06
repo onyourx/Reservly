@@ -1,4 +1,4 @@
-# Creating the "Gosselin Bookings" Shopify app
+# Creating the "Reservly" Shopify app
 
 One-time setup. Prereqs: a [Shopify Partner account](https://partners.shopify.com)
 and a development store (Partner dashboard → Stores → Add store → development store).
@@ -9,11 +9,11 @@ Shopify CLI is already installed (`shopify version` → 4.x).
 ```bash
 cd apps/booking
 shopify auth login            # opens the browser, sign into your Partner account
-shopify app config link       # "Create this project as a new app" → yes, name: gosselin-bookings
+shopify app config link       # "Create this project as a new app" → yes, name: reservly
 ```
 
 `config link` fills `client_id` in `shopify.app.toml`. Then grab the **Client secret**
-(Partner dashboard → Apps → gosselin-bookings → Overview → Client credentials) and
+(Partner dashboard → Apps → reservly → Overview → Client credentials) and
 paste it into **Booking Desk → Settings → Shopify API secret** (it verifies webhook
 HMACs and app-proxy signatures). Set **Shopify shop** to your dev store domain there too.
 
