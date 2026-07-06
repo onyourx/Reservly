@@ -1,8 +1,8 @@
 # Shopify app configuration for "Reservly".
-# Fill in client_id after creating the app in the Partner dashboard, then run
-# `shopify app deploy` from apps/booking to publish the theme extension.
+# Linked to the Partner-dashboard app; `shopify app deploy` from apps/booking
+# publishes the theme extension + this config.
 name = "reservly"
-client_id = ""
+client_id = "575f34ce7f7e8707d2dd9c29078525ca"
 application_url = "https://bookings.example.com"
 embedded = false
 
