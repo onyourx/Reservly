@@ -1,0 +1,27 @@
+# Shopify app configuration for "Gosselin Bookings".
+# Fill in client_id after creating the app in the Partner dashboard, then run
+# `shopify app deploy` from apps/booking to publish the theme extension.
+name = "gosselin-bookings"
+client_id = ""
+application_url = "https://bookings.example.com"
+embedded = false
+
+[access_scopes]
+scopes = "read_products,write_products,read_orders,read_customers"
+
+[auth]
+redirect_urls = ["https://bookings.example.com/auth/callback"]
+
+[webhooks]
+api_version = "2025-07"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "https://bookings.example.com/webhooks/shopify/orders-create"
+
+# App Proxy: storefront widget calls /apps/booking/* on the shop domain; Shopify
+# signs and forwards to our server's /proxy/* routes.
+[app_proxy]
+url = "https://bookings.example.com/proxy"
+subpath = "booking"
+prefix = "apps"

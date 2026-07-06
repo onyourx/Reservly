@@ -1,0 +1,67 @@
+{% comment %}
+  Booking widget — app block for product pages of rental/course products.
+
+  The product carries two metafields (set by the catalog sync):
+    product.metafields.booking.type        → "RENTAL" | "COURSE"
+    product.metafields.booking.product_no  → LS Activity ProductNo
+
+  Rentals: store + date-range pickers, live availability + price via the app proxy
+  (/apps/booking/*). Courses: upcoming session slots with remaining seats.
+  On "Add to cart" the selection is submitted as line item properties (_booking_*),
+  so retail items and bookings check out in ONE Shopify transaction; the middleware
+  turns the orders/create webhook into NAV LS Activity reservations.
+{% endcomment %}
+
+{% assign btype = product.metafields.booking.type | default: block.settings.booking_type %}
+{% assign bno = product.metafields.booking.product_no | default: product.handle | upcase %}
+
+<div class="gsl-booking" data-type="{{ btype }}" data-product-no="{{ bno }}"
+     data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+     data-proxy="/apps/booking">
+  {% if btype == 'RENTAL' %}
+    <h3>{{ 'Book this rental' }}</h3>
+    <label>Store
+      <select class="gsl-store"><option value="">Loading stores…</option></select>
+    </label>
+    <div class="gsl-row">
+      <label>Pick up <input type="datetime-local" class="gsl-from"></label>
+      <label>Return <input type="datetime-local" class="gsl-to"></label>
+    </div>
+    <div class="gsl-quote" hidden>
+      <span class="gsl-days"></span> · <strong class="gsl-price"></strong>
+      <span class="gsl-deposit"></span>
+      <div class="gsl-avail"></div>
+    </div>
+  {% else %}
+    <h3>{{ 'Choose a class date' }}</h3>
+    <div class="gsl-slots"><em>Loading sessions…</em></div>
+  {% endif %}
+
+  <form method="post" action="/cart/add" class="gsl-add-form">
+    <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+    <input type="hidden" name="quantity" value="1" class="gsl-qty">
+    <input type="hidden" name="properties[_booking_type]" value="{{ btype }}">
+    <input type="hidden" name="properties[_product_no]" value="{{ bno }}">
+    <input type="hidden" name="properties[_store_id]" class="gsl-p-store">
+    <input type="hidden" name="properties[_from]" class="gsl-p-from">
+    <input type="hidden" name="properties[_to]" class="gsl-p-to">
+    <input type="hidden" name="properties[_session_id]" class="gsl-p-session">
+    <input type="hidden" name="properties[Booking]" class="gsl-p-label">
+    <button type="submit" class="gsl-add" disabled>Add booking to cart</button>
+  </form>
+</div>
+
+{{ 'booking-widget.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'booking-widget.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Booking widget",
+  "target": "section",
+  "settings": [
+    { "type": "select", "id": "booking_type", "label": "Booking type (fallback if no metafield)",
+      "options": [ { "value": "RENTAL", "label": "Rental" }, { "value": "COURSE", "label": "Course" } ],
+      "default": "RENTAL" }
+  ]
+}
+{% endschema %}

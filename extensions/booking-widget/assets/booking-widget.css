@@ -1,0 +1,13 @@
+.gsl-booking { border: 1px solid #e3e3e3; border-radius: 10px; padding: 18px 20px; margin: 16px 0; font-size: 15px; }
+.gsl-booking h3 { margin: 0 0 12px; font-size: 17px; }
+.gsl-booking label { display: block; margin: 8px 0; }
+.gsl-booking select, .gsl-booking input[type="datetime-local"] { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; }
+.gsl-row { display: flex; gap: 12px; }
+.gsl-row label { flex: 1; }
+.gsl-quote { margin: 10px 0; padding: 10px 12px; background: #f6f8ff; border-radius: 8px; }
+.gsl-avail.ok { color: #157347; margin-top: 6px; }
+.gsl-avail.no { color: #b02a37; margin-top: 6px; }
+.gsl-slot { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid #e3e3e3; border-radius: 8px; margin: 6px 0; cursor: pointer; }
+.gsl-slot:has(input:checked) { border-color: #1f4fd8; background: #f6f8ff; }
+.gsl-add { width: 100%; margin-top: 10px; padding: 12px; border: 0; border-radius: 8px; background: #1f4fd8; color: #fff; font-size: 15px; cursor: pointer; }
+.gsl-add:disabled { background: #b9c4e8; cursor: not-allowed; }

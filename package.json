@@ -1,0 +1,37 @@
+{
+  "name": "booking",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gosselin Booking Desk — rentals & course bookings app: Shopify-native storefront widget, staff store view pushing to LS Retail POS, NAV LS Activity integration.",
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:web": "vite web",
+    "build": "vite build web && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "start": "NODE_ENV=production tsx server/index.ts"
+  },
+  "dependencies": {
+    "axios": "^1.13.6",
+    "axios-ntlm": "^1.4.6",
+    "better-sqlite3": "^11.9.0",
+    "express": "^4.21.0",
+    "fast-xml-parser": "^4.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
