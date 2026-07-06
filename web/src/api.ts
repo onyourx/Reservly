@@ -284,7 +284,14 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     body: hasBody ? JSON.stringify(opts.body) : undefined,
   });
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/auth")) {
+    // 401s from the staff-gated API relock the app; platform-admin endpoints
+    // handle their own auth (a plain staff user legitimately gets 401 there).
+    if (
+      res.status === 401 &&
+      !path.startsWith("/api/login") &&
+      !path.startsWith("/api/auth") &&
+      !path.startsWith("/api/admin/")
+    ) {
       window.dispatchEvent(new Event("bd:unauthorized"));
     }
     let message = `${res.status} ${res.statusText}`;

@@ -10,14 +10,18 @@ import { ProductsList } from "./pages/ProductsList";
 import { ProductDetail } from "./pages/ProductDetail";
 import { Courses } from "./pages/Courses";
 import { SettingsPage } from "./pages/Settings";
+import { TenantsPage } from "./pages/Tenants";
+import { useEffect, useState } from "react";
+import { api } from "./api";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { to: string; label: string; end: boolean }[] = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/bookings", label: "Bookings", end: true },
   { to: "/bookings/new", label: "New booking", end: true },
   { to: "/products", label: "Products", end: false },
   { to: "/courses", label: "Sessions & Resources", end: false },
   { to: "/settings", label: "Settings", end: false },
+  { to: "/tenants", label: "Tenants", end: false },
 ];
 
 function StoreSelector() {
@@ -42,6 +46,16 @@ function StoreSelector() {
 }
 
 function Shell() {
+  // Platform super-admin context: shows the tenant banner when operating a
+  // tenant other than the default.
+  const [admin, setAdmin] = useState<{ email: string; tenant: string | null } | null>(null);
+  useEffect(() => {
+    api<{ email: string; tenant: string | null }>("/api/admin/me").then(setAdmin).catch(() => setAdmin(null));
+  }, []);
+  const exitTenant = async () => {
+    await api("/api/admin/use-tenant", { body: { slug: null } }).catch(() => {});
+    window.location.href = "/tenants";
+  };
   return (
     <div className="app">
       <aside className="sidebar">
@@ -67,6 +81,12 @@ function Shell() {
         <div className="sidebar-foot">Staff back office</div>
       </aside>
       <div className="main">
+        {admin?.tenant && (
+          <div className="tenant-banner">
+            Operating tenant: <strong>{admin.tenant}</strong> as {admin.email}
+            <button type="button" onClick={() => void exitTenant()}>Exit</button>
+          </div>
+        )}
         <header className="topbar">
           <StoreSelector />
         </header>
@@ -80,6 +100,7 @@ function Shell() {
             <Route path="/products/:id" element={<ProductDetail />} />
             <Route path="/courses" element={<Courses />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/tenants" element={<TenantsPage />} />
             <Route path="*" element={<div className="page"><h1>Not found</h1></div>} />
           </Routes>
         </main>

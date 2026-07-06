@@ -4,4 +4,10 @@ node_modules/
 booking.db
 booking.db-shm
 booking.db-wal
+booking-*.db
+booking-*.db-shm
+booking-*.db-wal
+platform.db
+platform.db-shm
+platform.db-wal
 web/dist/

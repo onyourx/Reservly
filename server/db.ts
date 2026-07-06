@@ -1,14 +1,42 @@
 import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.BOOKING_DB || path.join(__dirname, "..", "booking.db");
 
-export const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+// ---------------------------------------------------------------------------
+// Multi-tenancy: one SQLite file per tenant. Request middleware selects the
+// tenant and every existing `db.…` call transparently hits the right file via
+// this AsyncLocalStorage-backed proxy — no per-query tenant_id plumbing.
+// Outside a request context (boot, schedulers) the default tenant is used.
+// ---------------------------------------------------------------------------
+
+export interface TenantContext { slug: string; db: Database.Database }
+
+export const tenantALS = new AsyncLocalStorage<TenantContext>();
+
+function openDatabase(file: string): Database.Database {
+  const d = new Database(file);
+  d.pragma("journal_mode = WAL");
+  d.pragma("foreign_keys = ON");
+  return d;
+}
+
+export const DEFAULT_TENANT_SLUG = "gosselin";
+const defaultDb = openDatabase(DB_PATH);
+
+export const currentTenant = () => tenantALS.getStore() ?? { slug: DEFAULT_TENANT_SLUG, db: defaultDb };
+
+export const db: Database.Database = new Proxy({} as Database.Database, {
+  get(_target, prop) {
+    const real = currentTenant().db as unknown as Record<string | symbol, unknown>;
+    const value = real[prop];
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(real) : value;
+  },
+});
 
 export const now = () => new Date().toISOString();
 /** Store-local calendar date (YYYY-MM-DD) — "today" for pickups/returns/classes
@@ -25,7 +53,8 @@ export function pj<T>(s: string | null | undefined, fallback: T): T {
   }
 }
 
-db.exec(`
+export function initSchema(d: import("better-sqlite3").Database) {
+  d.exec(`
 CREATE TABLE IF NOT EXISTS stores (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,        -- NAV location code (LS Activity FixedLocation / pLocationNo)
@@ -198,19 +227,22 @@ CREATE TABLE IF NOT EXISTS audit_log (          -- access log for personal data 
 );
 `);
 
-// Post-v1 columns (idempotent migrations for existing databases).
-for (const stmt of [
-  "ALTER TABLE booking_lines ADD COLUMN checklist TEXT NOT NULL DEFAULT '[]'",
-  "ALTER TABLE bookings ADD COLUMN sign_token TEXT DEFAULT ''",
-  "ALTER TABLE bookings ADD COLUMN signature_png TEXT DEFAULT ''",
-  "ALTER TABLE bookings ADD COLUMN signature_name TEXT DEFAULT ''",
-]) {
-  try {
-    db.exec(stmt);
-  } catch {
-    /* column already exists */
+  // Post-v1 columns (idempotent migrations for existing databases).
+  for (const stmt of [
+    "ALTER TABLE booking_lines ADD COLUMN checklist TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE bookings ADD COLUMN sign_token TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN signature_png TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN signature_name TEXT DEFAULT ''",
+  ]) {
+    try {
+      d.exec(stmt);
+    } catch {
+      /* column already exists */
+    }
   }
 }
+
+initSchema(defaultDb);
 
 const SETTING_DEFAULTS: Record<string, string> = {
   navMode: process.env.NAV_BASE_URL ? "live" : "mock",

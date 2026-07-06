@@ -1,6 +1,6 @@
 import { Router } from "express";
 import crypto from "node:crypto";
-import { db, now, j, localDate, auditLog, getSettings } from "../db.js";
+import { db, now, j, localDate, auditLog, getSettings, currentTenant, DEFAULT_TENANT_SLUG } from "../db.js";
 import { quoteLines, round2 } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots } from "../engine/availability.js";
 import { createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
@@ -150,7 +150,8 @@ bookingRouter.post("/bookings/:id/request-signature", (req, res) => {
     const token = crypto.randomBytes(24).toString("base64url");
     db.prepare("UPDATE bookings SET sign_token = ?, updated_at = ? WHERE id = ?").run(token, now(), b.id);
     const base = (getSettings().publicUrl || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
-    const url = `${base}/sign/${token}`;
+    const { slug } = currentTenant();
+    const url = `${base}/sign/${token}${slug !== DEFAULT_TENANT_SLUG ? `?t=${slug}` : ""}`;
     emit(b.id, "booking.signature_requested", { email: b.customer_email, url });
     auditLog("signature.requested", b.ref, b.customer_email);
     res.json({ url, booking: serializeBooking(b.id) });

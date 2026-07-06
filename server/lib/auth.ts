@@ -5,6 +5,7 @@
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import { db, getSettings, auditLog, now } from "../db.js";
+import { adminSession } from "./platform.js";
 
 const MIN_PASSWORD_LENGTH = 12;
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // one shift
@@ -48,6 +49,7 @@ function tokenOf(req: Request): string {
 }
 
 export function isAuthenticated(req: Request): boolean {
+  if (adminSession(req)) return true; // platform super admin passes every tenant gate
   if (!authRequired()) return true;
   const expires = sessions.get(tokenOf(req));
   return Boolean(expires && expires > Date.now());

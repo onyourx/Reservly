@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { seedIfEmpty } from "./seed.js";
 import { requireAuth } from "./lib/auth.js";
 import { startRetentionSchedule } from "./lib/privacy.js";
+import { seedPlatform, tenantMiddleware } from "./lib/platform.js";
+import { adminRouter } from "./routes/admin.js";
 import { catalogRouter } from "./routes/catalog.js";
 import { bookingRouter } from "./routes/booking.js";
 import { settingsRouter, shopifyRouter, proxyRouter } from "./routes/integration.js";
@@ -13,14 +15,21 @@ import { signRouter } from "./routes/sign.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4646);
 
+seedPlatform();
 seedIfEmpty();
 
 const app = express();
 
 // Shopify webhooks need the raw body for HMAC — mounted before express.json().
+// (They serve the default tenant; per-tenant shops would pass ?t=<slug> in the
+// webhook uri, which tenantMiddleware honors on all other routes.)
 app.use("/webhooks/shopify", shopifyRouter);
 
 app.use(express.json({ limit: "2mb" }));
+
+// Tenant selection for everything below (super-admin override > ?t= > default).
+app.use(tenantMiddleware);
+app.use("/api/admin", adminRouter);
 
 // Staff auth gate: everything under /api and /print except health/login/status.
 // Shopify surfaces (/webhooks, /proxy) authenticate by signature instead.

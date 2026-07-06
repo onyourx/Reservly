@@ -62,7 +62,7 @@ signRouter.get("/:token", (req, res) => {
       submit.onclick = function () {
         if (!hasInk) return;
         submit.disabled = true; submit.textContent = "Sending…";
-        fetch(location.pathname, {
+        fetch(location.pathname + location.search, {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ name: document.getElementById("sig-name").value, image: canvas.toDataURL("image/png") }),
         }).then(function (r) { return r.json(); }).then(function (d) {
