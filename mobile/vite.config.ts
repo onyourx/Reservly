@@ -20,6 +20,7 @@ export default defineConfig({
   base: "/m/",
   server: {
     port: 5647,
+    host: true, // bind 0.0.0.0 so staff can load the dev PWA from their phone on the LAN
     proxy: {
       "/api": "http://localhost:4646",
       "/sign": "http://localhost:4646",
