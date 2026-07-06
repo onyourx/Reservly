@@ -246,9 +246,12 @@ export interface Settings {
   posStoreId: string;
   posTerminalId: string;
   posStaffId: string;
+  idRetentionDays: string;
+  dataRetentionDays: string;
   /** Write-only: accepted on PUT, never returned by GET. */
   navPassword?: string;
   shopifyApiSecret?: string;
+  adminPassword?: string;
 }
 
 export interface ApiOptions {
@@ -268,6 +271,9 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     body: hasBody ? JSON.stringify(opts.body) : undefined,
   });
   if (!res.ok) {
+    if (res.status === 401 && !path.startsWith("/api/login") && !path.startsWith("/api/auth")) {
+      window.dispatchEvent(new Event("bd:unauthorized"));
+    }
     let message = `${res.status} ${res.statusText}`;
     try {
       const data: unknown = await res.json();

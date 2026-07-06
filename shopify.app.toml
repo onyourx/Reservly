@@ -19,6 +19,11 @@ api_version = "2025-07"
   topics = ["orders/create"]
   uri = "https://bookings.example.com/webhooks/shopify/orders-create"
 
+  # Mandatory privacy webhooks (GDPR/CCPA) — required for apps handling customer data.
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "https://bookings.example.com/webhooks/shopify/compliance"
+
 # App Proxy: storefront widget calls /apps/booking/* on the shop domain; Shopify
 # signs and forwards to our server's /proxy/* routes.
 [app_proxy]

@@ -1,5 +1,6 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
+import { AuthGate } from "./components/AuthGate";
 import { StoreProvider, useStores } from "./components/StoreContext";
 import { Dashboard } from "./pages/Dashboard";
 import { BookingsList } from "./pages/BookingsList";
@@ -91,9 +92,11 @@ export function App() {
   return (
     <BrowserRouter>
       <ToastProvider>
-        <StoreProvider>
-          <Shell />
-        </StoreProvider>
+        <AuthGate>
+          <StoreProvider>
+            <Shell />
+          </StoreProvider>
+        </AuthGate>
       </ToastProvider>
     </BrowserRouter>
   );

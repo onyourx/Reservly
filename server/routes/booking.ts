@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, now, j, localDate } from "../db.js";
+import { db, now, j, localDate, auditLog } from "../db.js";
 import { quoteLines, round2 } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots } from "../engine/availability.js";
 import { createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
@@ -72,6 +72,7 @@ bookingRouter.post("/bookings", async (req, res) => {
 bookingRouter.get("/bookings/:id", (req, res) => {
   const booking = serializeBooking(req.params.id);
   if (!booking) return res.status(404).json({ error: "Booking not found" });
+  auditLog("booking.viewed", booking.ref, booking.customer.email);
   res.json({ booking });
 });
 

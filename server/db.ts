@@ -177,6 +177,15 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS audit_log (          -- access log for personal data (privacy declaration: "log access")
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  actor TEXT NOT NULL DEFAULT 'staff',
+  action TEXT NOT NULL,                          -- login | login_failed | booking.viewed | privacy.export | ...
+  subject TEXT DEFAULT '',                       -- booking ref / customer email
+  detail TEXT NOT NULL DEFAULT ''
+);
 `);
 
 const SETTING_DEFAULTS: Record<string, string> = {
@@ -192,6 +201,11 @@ const SETTING_DEFAULTS: Record<string, string> = {
   posStoreId: "091",
   posTerminalId: "9101",
   posStaffId: "WEB",
+  // Privacy: retention periods (days). Encrypted government IDs are purged soon
+  // after a rental closes; whole bookings are anonymized after the long period.
+  idRetentionDays: "30",
+  dataRetentionDays: "730",
+  adminPasswordHash: "",
 };
 
 export function getSettings(): Record<string, string> {
@@ -207,6 +221,12 @@ export function putSettings(patch: Record<string, unknown>) {
   for (const [k, v] of Object.entries(patch)) {
     if (k in SETTING_DEFAULTS) stmt.run(k, String(v ?? ""));
   }
+}
+
+export function auditLog(action: string, subject = "", detail = "", actor = "staff") {
+  db.prepare("INSERT INTO audit_log (at, actor, action, subject, detail) VALUES (?, ?, ?, ?, ?)").run(
+    now(), actor, action, subject, detail,
+  );
 }
 
 export function logEvent(bookingId: string | null, type: string, detail: Record<string, unknown> = {}) {

@@ -8,9 +8,11 @@
 // RESERVED until reconciliation.
 import { Router, raw } from "express";
 import crypto from "node:crypto";
-import { db, getSettings, putSettings, pj } from "../db.js";
+import { db, getSettings, putSettings, pj, auditLog } from "../db.js";
 import { navMode } from "../lib/nav.js";
 import { ensureMetafieldDefinitions } from "../lib/shopifyAdmin.js";
+import { authRequired, isAuthenticated, login, logout, setAdminPassword } from "../lib/auth.js";
+import { collectCustomerData, redactCustomer, sweepRetention } from "../lib/privacy.js";
 import { createBooking } from "../lib/bookingService.js";
 import { quoteLines } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots } from "../engine/availability.js";
@@ -21,11 +23,24 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId"];
+const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays"];
 
 settingsRouter.get("/health", (_req, res) => {
-  res.json({ ok: true, navMode: navMode(), shopifyConfigured: Boolean(getSettings().shopifyApiSecret) });
+  res.json({
+    ok: true,
+    navMode: navMode(),
+    shopifyConfigured: Boolean(getSettings().shopifyApiSecret),
+    authRequired: authRequired(),
+  });
 });
+
+// --- Staff auth (open endpoints; everything else behind requireAuth) ----------
+
+settingsRouter.get("/auth", (req, res) => {
+  res.json({ required: authRequired(), authenticated: isAuthenticated(req) });
+});
+settingsRouter.post("/login", login);
+settingsRouter.post("/logout", logout);
 
 settingsRouter.get("/settings", (_req, res) => {
   const s = getSettings();
@@ -33,9 +48,39 @@ settingsRouter.get("/settings", (_req, res) => {
 });
 
 settingsRouter.put("/settings", (req, res) => {
-  putSettings(req.body ?? {});
+  const { adminPassword, ...rest } = req.body ?? {};
+  try {
+    if (adminPassword) setAdminPassword(String(adminPassword));
+  } catch (err) {
+    return res.status(400).json({ error: String((err as Error).message ?? err) });
+  }
+  putSettings(rest);
   const s = getSettings();
   res.json({ settings: Object.fromEntries(SAFE_KEYS.map((k) => [k, s[k] ?? ""])) });
+});
+
+// --- Privacy tooling (staff-facing, audited) -----------------------------------
+
+settingsRouter.get("/privacy/export", (req, res) => {
+  const email = String(req.query.email ?? "").trim();
+  if (!email) return res.status(400).json({ error: "email is required" });
+  res.json(collectCustomerData(email));
+});
+
+settingsRouter.post("/privacy/redact", (req, res) => {
+  const email = String(req.body?.email ?? "").trim();
+  if (!email) return res.status(400).json({ error: "email is required" });
+  res.json({ redactedBookings: redactCustomer(email) });
+});
+
+settingsRouter.post("/privacy/sweep", (_req, res) => {
+  res.json(sweepRetention());
+});
+
+settingsRouter.get("/audit", (req, res) => {
+  const rows = db.prepare("SELECT at, actor, action, subject, detail FROM audit_log ORDER BY id DESC LIMIT ?")
+    .all(Number(req.query.limit) || 100);
+  res.json({ audit: rows });
 });
 
 /** One-click Shopify store setup: metafield definitions the widget reads. */
@@ -118,6 +163,36 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
     db.prepare("INSERT INTO events (booking_id, type, detail, at) VALUES (NULL, 'shopify.order_failed', ?, ?)")
       .run(JSON.stringify({ orderId: order?.id, error: String(err) }), new Date().toISOString());
   }
+});
+
+// --- Shopify mandatory compliance webhooks (GDPR) -------------------------------
+// Must 401 on invalid HMAC per Shopify requirements. One endpoint, topic header.
+
+shopifyRouter.post("/compliance", raw({ type: "*/*" }), (req, res) => {
+  const secret = getSettings().shopifyApiSecret;
+  const hmac = String(req.headers["x-shopify-hmac-sha256"] ?? "");
+  if (!verifyShopifyHmac(req.body as Buffer, hmac, secret)) {
+    return res.status(401).json({ error: "invalid webhook HMAC" });
+  }
+  const topic = String(req.headers["x-shopify-topic"] ?? "");
+  let payload: any = {};
+  try {
+    payload = JSON.parse((req.body as Buffer).toString("utf8"));
+  } catch {
+    /* empty body is fine for shop/redact */
+  }
+  const email = payload?.customer?.email ?? "";
+  if (topic === "customers/redact") {
+    redactCustomer(email);
+  } else if (topic === "customers/data_request") {
+    // Export is compiled and audited; staff retrieves it via /api/privacy/export
+    // and delivers it to the merchant/customer.
+    auditLog("privacy.data_request", email, `shopify order ids: ${JSON.stringify(payload?.orders_requested ?? [])}`, "shopify");
+  } else if (topic === "shop/redact") {
+    putSettings({ shopifyShop: "", shopifyApiSecret: "" });
+    auditLog("privacy.shop_redact", String(payload?.shop_domain ?? ""), "", "shopify");
+  }
+  res.status(200).json({ ok: true });
 });
 
 // --- Shopify App Proxy (storefront widget → /apps/booking/*) ---------------------

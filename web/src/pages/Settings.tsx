@@ -14,12 +14,15 @@ const EMPTY: Settings = {
   posStoreId: "",
   posTerminalId: "",
   posStaffId: "",
+  idRetentionDays: "30",
+  dataRetentionDays: "730",
   navPassword: "",
   shopifyApiSecret: "",
+  adminPassword: "",
 };
 
 /** Secrets are write-only: send them only when the user typed a new value. */
-const WRITE_ONLY: (keyof Settings)[] = ["navPassword", "shopifyApiSecret"];
+const WRITE_ONLY: (keyof Settings)[] = ["navPassword", "shopifyApiSecret", "adminPassword"];
 
 export function SettingsPage() {
   const toast = useToast();
@@ -204,6 +207,43 @@ export function SettingsPage() {
                     type="text"
                     value={settings.posStaffId}
                     onChange={(e) => set("posStaffId", e.target.value)}
+                  />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <h2 className="card-title">Staff access &amp; privacy</h2>
+            {loading ? (
+              <Skeleton rows={3} height={20} />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <Field
+                  label="Staff password (min 12 chars, write-only)"
+                  hint="Once set, the whole app and print pages require sign-in. Logins and personal-data access are audited."
+                >
+                  <input
+                    type="password"
+                    value={settings.adminPassword ?? ""}
+                    onChange={(e) => set("adminPassword", e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <Field label="ID retention (days after booking closes)">
+                  <input
+                    type="number"
+                    min={1}
+                    value={settings.idRetentionDays}
+                    onChange={(e) => set("idRetentionDays", e.target.value)}
+                  />
+                </Field>
+                <Field label="Booking data retention (days)" hint="Older completed/cancelled bookings are anonymized; totals are kept.">
+                  <input
+                    type="number"
+                    min={30}
+                    value={settings.dataRetentionDays}
+                    onChange={(e) => set("dataRetentionDays", e.target.value)}
                   />
                 </Field>
               </div>

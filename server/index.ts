@@ -2,6 +2,8 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedIfEmpty } from "./seed.js";
+import { requireAuth } from "./lib/auth.js";
+import { startRetentionSchedule } from "./lib/privacy.js";
 import { catalogRouter } from "./routes/catalog.js";
 import { bookingRouter } from "./routes/booking.js";
 import { settingsRouter, shopifyRouter, proxyRouter } from "./routes/integration.js";
@@ -18,11 +20,20 @@ const app = express();
 app.use("/webhooks/shopify", shopifyRouter);
 
 app.use(express.json({ limit: "2mb" }));
+
+// Staff auth gate: everything under /api and /print except health/login/status.
+// Shopify surfaces (/webhooks, /proxy) authenticate by signature instead.
+const OPEN_API = new Set(["/health", "/auth", "/login", "/logout"]);
+app.use("/api", (req, res, next) => (OPEN_API.has(req.path) ? next() : requireAuth(req, res, next)));
+app.use("/print", requireAuth);
+
 app.use("/api", settingsRouter);
 app.use("/api", catalogRouter);
 app.use("/api", bookingRouter);
 app.use("/proxy", proxyRouter); // Shopify App Proxy target (storefront widget)
 app.use("/print", printRouter);
+
+startRetentionSchedule();
 
 // Production: serve the built admin SPA.
 const dist = path.join(__dirname, "..", "web", "dist");
