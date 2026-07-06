@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { db, uid, now } from "../db.js";
 import { getActivityTypes, getActivityProducts, navMode } from "../lib/nav.js";
+import { ensureMetafieldDefinitions, pushProductToShopify } from "../lib/shopifyAdmin.js";
+import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
 
 export const catalogRouter = Router();
@@ -106,6 +108,31 @@ catalogRouter.post("/products/sync", async (_req, res) => {
     res.json({ synced, mode: "live" });
   } catch (err) {
     res.status(502).json({ error: `NAV sync failed: ${String(err)}` });
+  }
+});
+
+/** Create/update this product in Shopify (title, price, description, image) with
+ *  the booking.* metafields the storefront widget reads — the "publish" half of
+ *  R0's NAV → Shopify flow, no manual product creation needed. */
+let metafieldDefsEnsured = false;
+catalogRouter.post("/products/:id/push-shopify", async (req, res) => {
+  const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
+  if (!p) return res.status(404).json({ error: "Product not found" });
+  try {
+    if (!metafieldDefsEnsured) {
+      await ensureMetafieldDefinitions();
+      metafieldDefsEnsured = true;
+    }
+    const result = await pushProductToShopify(p);
+    db.prepare("UPDATE products SET shopify_product_id = ?, updated_at = ? WHERE id = ?").run(result.id, now(), p.id);
+    emit(null, "shopify.product_pushed", { productNo: p.product_no, shopifyProductId: result.id });
+    res.json({
+      product: serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(p.id)),
+      shopifyProductId: result.id,
+      handle: result.handle,
+    });
+  } catch (err) {
+    res.status(502).json({ error: String((err as Error).message ?? err) });
   }
 });
 

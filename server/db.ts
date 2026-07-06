@@ -187,6 +187,7 @@ const SETTING_DEFAULTS: Record<string, string> = {
   navDomain: process.env.NAV_DOMAIN || "",
   shopifyShop: process.env.SHOPIFY_SHOP || "",
   shopifyApiSecret: process.env.SHOPIFY_API_SECRET || "",
+  shopifyClientId: process.env.SHOPIFY_CLIENT_ID || "",
   conduitUrl: process.env.CONDUIT_URL || "",
   posStoreId: "091",
   posTerminalId: "9101",

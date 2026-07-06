@@ -10,6 +10,7 @@ import { Router, raw } from "express";
 import crypto from "node:crypto";
 import { db, getSettings, putSettings, pj } from "../db.js";
 import { navMode } from "../lib/nav.js";
+import { ensureMetafieldDefinitions } from "../lib/shopifyAdmin.js";
 import { createBooking } from "../lib/bookingService.js";
 import { quoteLines } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots } from "../engine/availability.js";
@@ -20,7 +21,7 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId"];
+const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId"];
 
 settingsRouter.get("/health", (_req, res) => {
   res.json({ ok: true, navMode: navMode(), shopifyConfigured: Boolean(getSettings().shopifyApiSecret) });
@@ -35,6 +36,15 @@ settingsRouter.put("/settings", (req, res) => {
   putSettings(req.body ?? {});
   const s = getSettings();
   res.json({ settings: Object.fromEntries(SAFE_KEYS.map((k) => [k, s[k] ?? ""])) });
+});
+
+/** One-click Shopify store setup: metafield definitions the widget reads. */
+settingsRouter.post("/shopify/setup", async (_req, res) => {
+  try {
+    res.json({ results: await ensureMetafieldDefinitions() });
+  } catch (err) {
+    res.status(502).json({ error: String((err as Error).message ?? err) });
+  }
 });
 
 settingsRouter.get("/events", (req, res) => {

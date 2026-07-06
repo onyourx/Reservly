@@ -25,3 +25,6 @@ api_version = "2025-07"
 url = "https://bookings.example.com/proxy"
 subpath = "booking"
 prefix = "apps"
+
+[build]
+automatically_update_urls_on_dev = true

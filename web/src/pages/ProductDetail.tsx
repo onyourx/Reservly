@@ -16,6 +16,7 @@ export function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   // Editable fields
   const [imageUrl, setImageUrl] = useState("");
@@ -90,6 +91,23 @@ export function ProductDetail() {
     }
   };
 
+  const publishToShopify = async () => {
+    setPublishing(true);
+    try {
+      const d = await api<{ product: Product; shopifyProductId: string; handle: string }>(
+        `/api/products/${id}/push-shopify`,
+        { method: "POST" },
+      );
+      setProduct((prev) => (prev ? { ...prev, ...d.product, sessions: prev.sessions } : d.product));
+      setShopifyProductId(d.shopifyProductId);
+      toast.success(`Published to Shopify (${d.handle}) — price, description and booking metafields set`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Publish failed");
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const addSessions = async () => {
     if (!product || !sessStart || !sessEnd || !sessStore) {
       toast.error("Start, end and store are required");
@@ -159,14 +177,26 @@ export function ProductDetail() {
             {p.securityDeposit > 0 && ` · deposit ${money(p.securityDeposit)}`}
           </div>
         </div>
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={saving}
-          onClick={() => void save()}
-        >
-          {saving && <Spinner small />} Save changes
-        </button>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="btn"
+            disabled={publishing}
+            onClick={() => void publishToShopify()}
+            title="Create or update this product in Shopify with price, description, image and the booking.* metafields"
+          >
+            {publishing && <Spinner small />}{" "}
+            {shopifyProductId ? "Update in Shopify" : "Publish to Shopify"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={saving}
+            onClick={() => void save()}
+          >
+            {saving && <Spinner small />} Save changes
+          </button>
+        </div>
       </div>
 
       <div className="grid-2">

@@ -30,6 +30,19 @@ export function SettingsPage() {
 
   const [health, setHealth] = useState<Health | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
+  const [settingUp, setSettingUp] = useState(false);
+
+  const setupShopify = async () => {
+    setSettingUp(true);
+    try {
+      const { results } = await api<{ results: string[] }>("/api/shopify/setup", { method: "POST" });
+      toast.success(results.join(" · ") || "Metafield definitions ready");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Setup failed");
+    } finally {
+      setSettingUp(false);
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -195,6 +208,23 @@ export function SettingsPage() {
                 </Field>
               </div>
             )}
+          </div>
+
+          <div className="card">
+            <h2 className="card-title">Shopify store setup</h2>
+            <div className="faint" style={{ marginBottom: 10 }}>
+              Creates the <span className="mono">booking.type</span> and{" "}
+              <span className="mono">booking.product_no</span> product metafield
+              definitions the storefront widget reads. Idempotent — safe to re-run.
+            </div>
+            <button
+              type="button"
+              className="btn"
+              disabled={settingUp}
+              onClick={() => void setupShopify()}
+            >
+              {settingUp && <Spinner small />} Set up metafield definitions
+            </button>
           </div>
 
           <div className="card">
