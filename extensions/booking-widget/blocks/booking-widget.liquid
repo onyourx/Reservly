@@ -37,7 +37,7 @@
     <div class="gsl-slots"><em>Loading sessions…</em></div>
   {% endif %}
 
-  <form method="post" action="/cart/add" class="gsl-add-form">
+  <form method="post" action="{{ routes.cart_add_url }}" class="gsl-add-form">
     <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
     <input type="hidden" name="quantity" value="1" class="gsl-qty">
     <input type="hidden" name="properties[_booking_type]" value="{{ btype }}">
