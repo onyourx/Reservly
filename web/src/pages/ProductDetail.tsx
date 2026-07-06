@@ -17,6 +17,8 @@ export function ProductDetail() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [chanOnlineStore, setChanOnlineStore] = useState(true);
+  const [chanPos, setChanPos] = useState(true);
 
   // Editable fields
   const [imageUrl, setImageUrl] = useState("");
@@ -25,6 +27,9 @@ export function ProductDetail() {
   const [availableOnWeb, setAvailableOnWeb] = useState(false);
   const [shopifyProductId, setShopifyProductId] = useState("");
   const [kit, setKit] = useState<KitItem[]>([]);
+  const [defaultUnitPrice, setDefaultUnitPrice] = useState("0");
+  const [securityDeposit, setSecurityDeposit] = useState("0");
+  const [priceTiers, setPriceTiers] = useState<{ description: string; price: number }[]>([]);
 
   // Session form (COURSE only)
   const [rooms, setRooms] = useState<Resource[]>([]);
@@ -52,6 +57,9 @@ export function ProductDetail() {
         setAvailableOnWeb(Boolean(p.availableOnWeb));
         setShopifyProductId(p.shopifyProductId ?? "");
         setKit(p.kit ?? []);
+        setDefaultUnitPrice(String(p.defaultUnitPrice ?? 0));
+        setSecurityDeposit(String(p.securityDeposit ?? 0));
+        setPriceTiers(p.prices ?? []);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -80,6 +88,9 @@ export function ProductDetail() {
           availableOnWeb,
           shopifyProductId: shopifyProductId || null,
           kit,
+          defaultUnitPrice: Number(defaultUnitPrice) || 0,
+          securityDeposit: Number(securityDeposit) || 0,
+          prices: priceTiers,
         },
       });
       setProduct((prev) => (prev ? { ...prev, ...updated, sessions: prev.sessions } : updated));
@@ -94,13 +105,21 @@ export function ProductDetail() {
   const publishToShopify = async () => {
     setPublishing(true);
     try {
-      const d = await api<{ product: Product; shopifyProductId: string; handle: string }>(
-        `/api/products/${id}/push-shopify`,
-        { method: "POST" },
-      );
+      const d = await api<{
+        product: Product;
+        shopifyProductId: string;
+        handle: string;
+        publishedTo: string[];
+        publishWarning?: string;
+      }>(`/api/products/${id}/push-shopify`, {
+        method: "POST",
+        body: { channels: { onlineStore: chanOnlineStore, pos: chanPos } },
+      });
       setProduct((prev) => (prev ? { ...prev, ...d.product, sessions: prev.sessions } : d.product));
       setShopifyProductId(d.shopifyProductId);
-      toast.success(`Published to Shopify (${d.handle}) — price, description and booking metafields set`);
+      const channels = d.publishedTo.length ? ` · live on ${d.publishedTo.join(" + ")}` : "";
+      toast.success(`Published to Shopify (${d.handle})${channels}`);
+      if (d.publishWarning) toast.error(`Channel publish warning: ${d.publishWarning}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Publish failed");
     } finally {
@@ -177,13 +196,21 @@ export function ProductDetail() {
             {p.securityDeposit > 0 && ` · deposit ${money(p.securityDeposit)}`}
           </div>
         </div>
-        <div className="btn-row">
+        <div className="btn-row" style={{ alignItems: "center" }}>
+          <label className="checkbox-row" title="Publish to the Online Store sales channel">
+            <input type="checkbox" checked={chanOnlineStore} onChange={(e) => setChanOnlineStore(e.target.checked)} />
+            Online Store
+          </label>
+          <label className="checkbox-row" title="Publish to the Point of Sale channel">
+            <input type="checkbox" checked={chanPos} onChange={(e) => setChanPos(e.target.checked)} />
+            POS
+          </label>
           <button
             type="button"
             className="btn"
             disabled={publishing}
             onClick={() => void publishToShopify()}
-            title="Create or update this product in Shopify with price, description, image and the booking.* metafields"
+            title="Create or update this product in Shopify with price, description, image, booking metafields — and publish it to the selected channels"
           >
             {publishing && <Spinner small />}{" "}
             {shopifyProductId ? "Update in Shopify" : "Publish to Shopify"}
@@ -295,18 +322,71 @@ export function ProductDetail() {
             Add kit item
           </button>
 
-          {p.prices.length > 0 && (
-            <>
-              <hr className="divider" />
-              <h2 className="card-title">Price tiers</h2>
-              {p.prices.map((tier, i) => (
-                <div className="fin-row" key={i}>
-                  <span className="muted">{tier.description}</span>
-                  <span>{money(tier.price)}</span>
-                </div>
-              ))}
-            </>
-          )}
+          <hr className="divider" />
+          <h2 className="card-title">Pricing</h2>
+          <div className="faint" style={{ marginBottom: 10 }}>
+            {p.type === "RENTAL" ? "Daily rate; a WEEKLY tier is applied per 7-day block when cheaper." : "Price per seat."}
+            {" "}In live NAV mode, the next catalog sync overwrites these with NAV prices.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <Field label={p.type === "RENTAL" ? "Price per day" : "Price"}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={defaultUnitPrice}
+                onChange={(e) => setDefaultUnitPrice(e.target.value)}
+              />
+            </Field>
+            {p.type === "RENTAL" && (
+              <Field label="Security deposit">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={securityDeposit}
+                  onChange={(e) => setSecurityDeposit(e.target.value)}
+                />
+              </Field>
+            )}
+          </div>
+          {priceTiers.map((tier, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+              <input
+                type="text"
+                placeholder="Tier (e.g. WEEKLY)"
+                value={tier.description}
+                style={{ width: 140 }}
+                onChange={(e) =>
+                  setPriceTiers(priceTiers.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))
+                }
+              />
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={tier.price}
+                onChange={(e) =>
+                  setPriceTiers(priceTiers.map((x, j) => (j === i ? { ...x, price: Number(e.target.value) || 0 } : x)))
+                }
+              />
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Remove price tier"
+                onClick={() => setPriceTiers(priceTiers.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setPriceTiers([...priceTiers, { description: "WEEKLY", price: 0 }])}
+          >
+            Add price tier
+          </button>
         </div>
       </div>
 

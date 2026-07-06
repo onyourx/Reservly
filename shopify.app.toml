@@ -7,7 +7,7 @@ application_url = "https://bookings.example.com"
 embedded = false
 
 [access_scopes]
-scopes = "read_products,write_products,read_orders,read_customers"
+scopes = "read_products,write_products,read_orders,read_customers,read_publications,write_publications"
 
 [auth]
 redirect_urls = ["https://bookings.example.com/auth/callback"]
@@ -15,14 +15,16 @@ redirect_urls = ["https://bookings.example.com/auth/callback"]
 [webhooks]
 api_version = "2025-07"
 
+  # Relative URIs resolve against application_url, which `shopify app dev`
+  # keeps pointed at the tunnel — so webhooks work in dev without manual edits.
   [[webhooks.subscriptions]]
   topics = ["orders/create"]
-  uri = "https://bookings.example.com/webhooks/shopify/orders-create"
+  uri = "/webhooks/shopify/orders-create"
 
   # Mandatory privacy webhooks (GDPR/CCPA) — required for apps handling customer data.
   [[webhooks.subscriptions]]
   compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
-  uri = "https://bookings.example.com/webhooks/shopify/compliance"
+  uri = "/webhooks/shopify/compliance"
 
 # App Proxy: storefront widget calls /apps/booking/* on the shop domain; Shopify
 # signs and forwards to our server's /proxy/* routes.

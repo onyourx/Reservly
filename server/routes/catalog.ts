@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, uid, now } from "../db.js";
 import { getActivityTypes, getActivityProducts, navMode } from "../lib/nav.js";
-import { ensureMetafieldDefinitions, pushProductToShopify } from "../lib/shopifyAdmin.js";
+import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels } from "../lib/shopifyAdmin.js";
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
 
@@ -49,17 +49,30 @@ catalogRouter.get("/products/:id", (req, res) => {
 catalogRouter.put("/products/:id", (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
-  const { imageUrl, webDescEn, webDescFr, kit, shopifyProductId, availableOnWeb } = req.body ?? {};
+  const { imageUrl, webDescEn, webDescFr, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, prices } = req.body ?? {};
+  // Prices are editable here; in live NAV mode the next catalog sync will
+  // overwrite them with NAV's — NAV stays the source of truth for pricing.
   db.prepare(
     `UPDATE products SET image_url = COALESCE(?, image_url), web_desc_en = COALESCE(?, web_desc_en),
      web_desc_fr = COALESCE(?, web_desc_fr), shopify_product_id = COALESCE(?, shopify_product_id),
-     available_on_web = COALESCE(?, available_on_web), updated_at = ? WHERE id = ?`,
+     available_on_web = COALESCE(?, available_on_web),
+     default_unit_price = COALESCE(?, default_unit_price),
+     security_deposit = COALESCE(?, security_deposit), updated_at = ? WHERE id = ?`,
   ).run(imageUrl ?? null, webDescEn ?? null, webDescFr ?? null, shopifyProductId ?? null,
-    availableOnWeb == null ? null : availableOnWeb ? 1 : 0, now(), p.id);
+    availableOnWeb == null ? null : availableOnWeb ? 1 : 0,
+    defaultUnitPrice == null ? null : Number(defaultUnitPrice),
+    securityDeposit == null ? null : Number(securityDeposit), now(), p.id);
   if (Array.isArray(kit)) {
     db.prepare("DELETE FROM product_kit_items WHERE product_id = ?").run(p.id);
     const ins = db.prepare("INSERT INTO product_kit_items (id, product_id, item_no, description, qty) VALUES (?, ?, ?, ?, ?)");
     for (const k of kit) ins.run(uid(), p.id, String(k.itemNo ?? ""), String(k.description ?? ""), Number(k.qty) || 1);
+  }
+  if (Array.isArray(prices)) {
+    db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(p.id);
+    const ins = db.prepare("INSERT INTO product_prices (id, product_id, description, price) VALUES (?, ?, ?, ?)");
+    for (const t of prices) {
+      if (String(t.description ?? "").trim()) ins.run(uid(), p.id, String(t.description).trim().toUpperCase(), Number(t.price) || 0);
+    }
   }
   res.json({ product: serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(p.id)) });
 });
@@ -125,11 +138,25 @@ catalogRouter.post("/products/:id/push-shopify", async (req, res) => {
     }
     const result = await pushProductToShopify(p);
     db.prepare("UPDATE products SET shopify_product_id = ?, updated_at = ? WHERE id = ?").run(result.id, now(), p.id);
-    emit(null, "shopify.product_pushed", { productNo: p.product_no, shopifyProductId: result.id });
+    // Publish to sales channels (default: both Online Store and POS).
+    const channels = {
+      onlineStore: req.body?.channels?.onlineStore !== false,
+      pos: req.body?.channels?.pos !== false,
+    };
+    let publishedTo: string[] = [];
+    let publishWarning = "";
+    try {
+      publishedTo = await publishToChannels(result.id, channels);
+    } catch (err) {
+      publishWarning = String((err as Error).message ?? err); // product exists; channels can be fixed in admin
+    }
+    emit(null, "shopify.product_pushed", { productNo: p.product_no, shopifyProductId: result.id, publishedTo });
     res.json({
       product: serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(p.id)),
       shopifyProductId: result.id,
       handle: result.handle,
+      publishedTo,
+      ...(publishWarning ? { publishWarning } : {}),
     });
   } catch (err) {
     res.status(502).json({ error: String((err as Error).message ?? err) });

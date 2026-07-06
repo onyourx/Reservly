@@ -99,3 +99,8 @@
   .gsl-booking { padding: 16px; }
   .gsl-times { flex-direction: column; gap: 0; }
 }
+
+.gsl-error {
+  margin: 12px 0 4px; padding: 10px 14px; border-radius: 9px; font-size: 13px;
+  background: #fdf0f0; color: #b02a37; border: 1px solid #f3d2d5;
+}

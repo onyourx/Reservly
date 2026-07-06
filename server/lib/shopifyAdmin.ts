@@ -90,6 +90,41 @@ export async function ensureMetafieldDefinitions(): Promise<string[]> {
   return results;
 }
 
+/** Sales-channel publications, cached per process (they rarely change). */
+let publicationsCache: { id: string; name: string }[] | null = null;
+
+export async function getPublications(): Promise<{ id: string; name: string }[]> {
+  if (publicationsCache) return publicationsCache;
+  const d = await shopifyGql<{ publications: { nodes: { id: string; name: string }[] } }>(
+    `{ publications(first: 20) { nodes { id name } } }`,
+  );
+  publicationsCache = d.publications.nodes;
+  return publicationsCache;
+}
+
+/** Publish a product to the requested sales channels (Online Store / Point of Sale). */
+export async function publishToChannels(
+  productGid: string,
+  channels: { onlineStore?: boolean; pos?: boolean },
+): Promise<string[]> {
+  const pubs = await getPublications();
+  const wanted = pubs.filter(
+    (p) =>
+      (channels.onlineStore && p.name === "Online Store") ||
+      (channels.pos && p.name === "Point of Sale"),
+  );
+  if (!wanted.length) return [];
+  const d = await shopifyGql<{ publishablePublish: { userErrors: { message: string }[] } }>(
+    `mutation($id: ID!, $input: [PublicationInput!]!) {
+      publishablePublish(id: $id, input: $input) { userErrors { message } }
+    }`,
+    { id: productGid, input: wanted.map((p) => ({ publicationId: p.id })) },
+  );
+  const errs = d.publishablePublish.userErrors ?? [];
+  if (errs.length) throw new Error(`publish to channels: ${errs.map((e) => e.message).join("; ")}`);
+  return wanted.map((p) => p.name);
+}
+
 export interface PushableProduct {
   product_no: string; type: string; name: string; web_desc_en: string;
   default_unit_price: number; retail_item: string; image_url: string;

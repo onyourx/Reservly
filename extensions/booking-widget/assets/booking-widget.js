@@ -13,8 +13,19 @@
   function get(path, params) {
     var q = new URLSearchParams(params || {});
     return fetch(proxy + path + "?" + q.toString(), { headers: { accept: "application/json" } }).then(function (r) {
+      // A non-JSON reply means the app proxy isn't reaching the booking server
+      // (wrong proxy URL, tunnel down) — fail loudly instead of hanging.
+      var ct = r.headers.get("content-type") || "";
+      if (ct.indexOf("json") === -1) throw new Error("booking service unreachable (HTTP " + r.status + ")");
       return r.json();
     });
+  }
+  function showError(msg) {
+    var el = document.createElement("div");
+    el.className = "gsl-error";
+    el.textContent = msg;
+    root.insertBefore(el, form);
+    addBtn.disabled = true;
   }
   function money(n) {
     return "CA$" + Number(n).toFixed(2);
@@ -167,14 +178,19 @@
       });
     }
 
-    get("/stores").then(function (d) {
-      storeSel.innerHTML = "";
-      (d.stores || []).forEach(function (s) {
-        storeSel.add(new Option(s.name + (s.city ? " — " + s.city : ""), s.id));
+    get("/stores")
+      .then(function (d) {
+        storeSel.innerHTML = "";
+        (d.stores || []).forEach(function (s) {
+          storeSel.add(new Option(s.name + (s.city ? " — " + s.city : ""), s.id));
+        });
+        renderCalendar();
+        refreshQuote();
+      })
+      .catch(function () {
+        storeSel.innerHTML = "<option value=''>Stores unavailable</option>";
+        showError("Online booking is temporarily unavailable — please call the store or try again shortly.");
       });
-      renderCalendar();
-      refreshQuote();
-    });
 
     storeSel.addEventListener("change", function () {
       availCache = {};
@@ -198,10 +214,14 @@
   // ---------------------------------------------------------------- courses --
   if (type === "COURSE") {
     var slotsBox = root.querySelector(".gsl-slots");
-    get("/sessions", { productNo: productNo }).then(function (d) {
+    get("/sessions", { productNo: productNo }).catch(function () {
+      slotsBox.innerHTML = "";
+      showError("Online booking is temporarily unavailable — please call the store or try again shortly.");
+      return { slots: [] };
+    }).then(function (d) {
       var slots = d.slots || [];
       if (!slots.length) {
-        slotsBox.innerHTML = "<em>No upcoming sessions — check back soon.</em>";
+        if (!root.querySelector(".gsl-error")) slotsBox.innerHTML = "<em>No upcoming sessions — check back soon.</em>";
         return;
       }
       slotsBox.innerHTML = "";
