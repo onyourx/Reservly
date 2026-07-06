@@ -1,39 +1,59 @@
 {% comment %}
-  Booking widget — app block for product pages of rental/course products.
+  Booking widget — app section for rental/course product pages.
 
-  The product carries two metafields (set by the catalog sync):
+  Renders ONLY when the product carries booking metafields (set automatically by
+  Booking Desk → "Publish to Shopify"):
     product.metafields.booking.type        → "RENTAL" | "COURSE"
     product.metafields.booking.product_no  → LS Activity ProductNo
 
-  Rentals: store + date-range pickers, live availability + price via the app proxy
-  (/apps/booking/*). Courses: upcoming session slots with remaining seats.
-  On "Add to cart" the selection is submitted as line item properties (_booking_*),
-  so retail items and bookings check out in ONE Shopify transaction; the middleware
-  turns the orders/create webhook into NAV LS Activity reservations.
+  Rentals: store picker + range calendar (unavailable days disabled via the app
+  proxy) + pickup/return times + live quote. Courses: upcoming session slots.
+  Selection is submitted as _booking_* line item properties so retail items and
+  bookings check out in ONE Shopify transaction.
 {% endcomment %}
 
-{% assign btype = product.metafields.booking.type | default: block.settings.booking_type %}
-{% assign bno = product.metafields.booking.product_no | default: product.handle | upcase %}
+{% assign btype = product.metafields.booking.type %}
+{% assign bno = product.metafields.booking.product_no %}
 
+{% if btype == 'RENTAL' or btype == 'COURSE' %}
 <div class="gsl-booking" data-type="{{ btype }}" data-product-no="{{ bno }}"
-     data-variant-id="{{ product.selected_or_first_available_variant.id }}"
      data-proxy="/apps/booking">
+  <div class="gsl-head">
+    <h3>{% if btype == 'RENTAL' %}Reserve this equipment{% else %}Choose a class date{% endif %}</h3>
+    <span class="gsl-tag">{% if btype == 'RENTAL' %}Rental{% else %}Course{% endif %}</span>
+  </div>
+
   {% if btype == 'RENTAL' %}
-    <h3>{{ 'Book this rental' }}</h3>
-    <label>Store
+    <label class="gsl-field">Pick-up store
       <select class="gsl-store"><option value="">Loading stores…</option></select>
     </label>
-    <div class="gsl-row">
-      <label>Pick up <input type="datetime-local" class="gsl-from"></label>
-      <label>Return <input type="datetime-local" class="gsl-to"></label>
+
+    <div class="gsl-cal">
+      <div class="gsl-cal-head">
+        <button type="button" class="gsl-cal-prev" aria-label="Previous month">‹</button>
+        <span class="gsl-cal-title"></span>
+        <button type="button" class="gsl-cal-next" aria-label="Next month">›</button>
+      </div>
+      <div class="gsl-cal-dow"></div>
+      <div class="gsl-cal-grid" role="grid"></div>
+      <div class="gsl-cal-hint">Select a pick-up day, then a return day</div>
     </div>
+
+    <div class="gsl-times">
+      <label class="gsl-field">Pick-up time
+        <select class="gsl-time-from"></select>
+      </label>
+      <label class="gsl-field">Return time
+        <select class="gsl-time-to"></select>
+      </label>
+    </div>
+
     <div class="gsl-quote" hidden>
-      <span class="gsl-days"></span> · <strong class="gsl-price"></strong>
-      <span class="gsl-deposit"></span>
+      <div class="gsl-quote-row"><span class="gsl-days"></span><strong class="gsl-price"></strong></div>
+      <div class="gsl-deposit"></div>
       <div class="gsl-avail"></div>
     </div>
   {% else %}
-    <h3>{{ 'Choose a class date' }}</h3>
     <div class="gsl-slots"><em>Loading sessions…</em></div>
   {% endif %}
 
@@ -47,21 +67,27 @@
     <input type="hidden" name="properties[_to]" class="gsl-p-to">
     <input type="hidden" name="properties[_session_id]" class="gsl-p-session">
     <input type="hidden" name="properties[Booking]" class="gsl-p-label">
-    <button type="submit" class="gsl-add" disabled>Add booking to cart</button>
+    <button type="submit" class="gsl-add" disabled>
+      {% if btype == 'RENTAL' %}Select dates to book{% else %}Select a session{% endif %}
+    </button>
   </form>
 </div>
 
 {{ 'booking-widget.css' | asset_url | stylesheet_tag }}
 <script src="{{ 'booking-widget.js' | asset_url }}" defer></script>
+{% elsif request.design_mode %}
+  {% comment %} Theme editor only: explain why nothing renders on this product. {% endcomment %}
+  <div style="padding:14px;border:1px dashed #bbb;border-radius:8px;color:#666;font-size:14px;">
+    Booking widget: this product has no <code>booking.type</code> metafield, so the widget
+    stays hidden on the storefront. Publish a rental or course from Booking Desk, or set the
+    metafields manually, and it will appear here.
+  </div>
+{% endif %}
 
 {% schema %}
 {
   "name": "Booking widget",
   "target": "section",
-  "settings": [
-    { "type": "select", "id": "booking_type", "label": "Booking type (fallback if no metafield)",
-      "options": [ { "value": "RENTAL", "label": "Rental" }, { "value": "COURSE", "label": "Course" } ],
-      "default": "RENTAL" }
-  ]
+  "settings": []
 }
 {% endschema %}

@@ -1,13 +1,101 @@
-.gsl-booking { border: 1px solid #e3e3e3; border-radius: 10px; padding: 18px 20px; margin: 16px 0; font-size: 15px; }
-.gsl-booking h3 { margin: 0 0 12px; font-size: 17px; }
-.gsl-booking label { display: block; margin: 8px 0; }
-.gsl-booking select, .gsl-booking input[type="datetime-local"] { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; }
-.gsl-row { display: flex; gap: 12px; }
-.gsl-row label { flex: 1; }
-.gsl-quote { margin: 10px 0; padding: 10px 12px; background: #f6f8ff; border-radius: 8px; }
-.gsl-avail.ok { color: #157347; margin-top: 6px; }
-.gsl-avail.no { color: #b02a37; margin-top: 6px; }
-.gsl-slot { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid #e3e3e3; border-radius: 8px; margin: 6px 0; cursor: pointer; }
-.gsl-slot:has(input:checked) { border-color: #1f4fd8; background: #f6f8ff; }
-.gsl-add { width: 100%; margin-top: 10px; padding: 12px; border: 0; border-radius: 8px; background: #1f4fd8; color: #fff; font-size: 15px; cursor: pointer; }
-.gsl-add:disabled { background: #b9c4e8; cursor: not-allowed; }
+.gsl-booking {
+  --gsl-accent: #1f4fd8;
+  --gsl-accent-soft: #eef2fd;
+  --gsl-border: #e5e7ee;
+  border: 1px solid var(--gsl-border);
+  border-radius: 14px;
+  padding: 22px;
+  margin: 18px 0;
+  font-size: 15px;
+  line-height: 1.45;
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(20, 30, 70, 0.05);
+  max-width: 520px;
+}
+.gsl-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.gsl-head h3 { margin: 0; font-size: 18px; }
+.gsl-tag {
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 700;
+  background: var(--gsl-accent-soft); color: var(--gsl-accent);
+  padding: 4px 10px; border-radius: 999px;
+}
+.gsl-field { display: block; margin: 10px 0; font-size: 13px; font-weight: 600; color: #444; }
+.gsl-field select {
+  display: block; width: 100%; margin-top: 5px; padding: 10px 12px; font-size: 15px; font-weight: 400;
+  border: 1px solid #cdd2e0; border-radius: 9px; background: #fff;
+}
+
+/* Calendar */
+.gsl-cal { border: 1px solid var(--gsl-border); border-radius: 12px; padding: 12px; margin: 14px 0; }
+.gsl-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.gsl-cal-title { font-weight: 700; }
+.gsl-cal-prev, .gsl-cal-next {
+  border: 1px solid var(--gsl-border); background: #fff; border-radius: 8px;
+  width: 32px; height: 32px; font-size: 18px; line-height: 1; cursor: pointer; color: #333;
+}
+.gsl-cal-prev:hover, .gsl-cal-next:hover { background: var(--gsl-accent-soft); }
+.gsl-cal-dow, .gsl-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.gsl-cal-dow span { text-align: center; font-size: 11px; color: #999; padding: 4px 0; font-weight: 600; }
+.gsl-cal-grid button {
+  aspect-ratio: 1; border: 0; background: transparent; border-radius: 9px;
+  font-size: 14px; cursor: pointer; color: #222; position: relative;
+}
+.gsl-cal-grid button:hover:not(:disabled) { background: var(--gsl-accent-soft); }
+.gsl-cal-grid button:disabled { color: #c8c8c8; cursor: default; }
+.gsl-cal-grid button.gsl-soldout { text-decoration: line-through; }
+.gsl-cal-grid button.gsl-today { font-weight: 800; }
+.gsl-cal-grid button.gsl-in-range { background: var(--gsl-accent-soft); border-radius: 0; }
+.gsl-cal-grid button.gsl-sel-start, .gsl-cal-grid button.gsl-sel-end {
+  background: var(--gsl-accent); color: #fff; font-weight: 700;
+}
+.gsl-cal-grid button.gsl-sel-start { border-radius: 9px 0 0 9px; }
+.gsl-cal-grid button.gsl-sel-end { border-radius: 0 9px 9px 0; }
+.gsl-cal-grid button.gsl-sel-start.gsl-sel-end { border-radius: 9px; }
+.gsl-cal-hint { font-size: 12px; color: #888; margin-top: 8px; text-align: center; min-height: 15px; }
+
+.gsl-times { display: flex; gap: 12px; }
+.gsl-times .gsl-field { flex: 1; }
+
+/* Quote */
+.gsl-quote {
+  margin: 14px 0 4px; padding: 12px 16px; background: var(--gsl-accent-soft);
+  border-radius: 10px;
+}
+.gsl-quote-row { display: flex; justify-content: space-between; align-items: baseline; }
+.gsl-quote-row .gsl-price { font-size: 20px; }
+.gsl-deposit { font-size: 13px; color: #556; margin-top: 2px; }
+.gsl-avail { font-size: 13px; margin-top: 6px; font-weight: 600; }
+.gsl-avail.ok { color: #157347; }
+.gsl-avail.no { color: #b02a37; }
+
+/* Course slots */
+.gsl-slot {
+  display: flex; gap: 12px; align-items: center; padding: 12px 14px;
+  border: 1px solid var(--gsl-border); border-radius: 11px; margin: 8px 0; cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.gsl-slot:hover { border-color: var(--gsl-accent); }
+.gsl-slot:has(input:checked) { border-color: var(--gsl-accent); background: var(--gsl-accent-soft); }
+.gsl-slot input { accent-color: var(--gsl-accent); }
+.gsl-slot-main { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.gsl-slot-loc { font-size: 13px; color: #667; }
+.gsl-slot-series {
+  font-size: 11px; color: var(--gsl-accent); font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.gsl-slot-seats { font-size: 12px; font-weight: 700; color: #157347; white-space: nowrap; }
+.gsl-slot-seats.low { color: #b45309; }
+
+/* Add to cart */
+.gsl-add {
+  width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 10px;
+  background: var(--gsl-accent); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+  transition: filter 0.12s;
+}
+.gsl-add:hover:not(:disabled) { filter: brightness(1.08); }
+.gsl-add:disabled { background: #c3cbe8; cursor: not-allowed; }
+
+@media (max-width: 480px) {
+  .gsl-booking { padding: 16px; }
+  .gsl-times { flex-direction: column; gap: 0; }
+}
