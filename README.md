@@ -1,10 +1,23 @@
-# Gosselin Bookings — rentals & course bookings
+# Reservly — rentals & course bookings
 
-A booking platform that replaces Sesami in the Gosselin stack: customers rent
+A multi-tenant booking platform (built for Gosselin Photo): customers rent
 equipment and book classes **directly in Shopify** (same cart as retail products,
 one checkout), staff run the in-store flow from a dedicated back office
-(**Booking Desk**) that pushes transactions to **LS Retail POS** as suspended
-transactions, and everything is registered in **NAV via LS Activity** web services.
+(**Booking Desk**) and a phone app that push transactions to **LS Retail POS** as
+suspended transactions, and everything is registered in **NAV via LS Activity**
+web services.
+
+## Documentation
+
+| Doc | What |
+|---|---|
+| [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | Requirements spec + R0–R19 / class-booking traceability |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed architecture (diagrams, data model, flows, security) |
+| [API.md](API.md) | REST API contract |
+| [RUNNING.md](RUNNING.md) | Run modes, LAN access, Android install |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Production hosting, env vars, Shopify wiring, backups |
+| [PRIVACY.md](PRIVACY.md) | Privacy/compliance mapping (GDPR, retention, audit) |
+| [SHOPIFY_SETUP.md](SHOPIFY_SETUP.md) | Creating & linking the Shopify app |
 
 ```
                         ┌─────────────────────────────┐
