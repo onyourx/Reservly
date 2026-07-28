@@ -6,7 +6,7 @@ import { db } from "../db.js";
 export interface ProductRow {
   id: string; product_no: string; type: string; name: string;
   default_unit_price: number; security_deposit: number; retail_item: string;
-  min_qty: number; max_qty: number;
+  min_qty: number; max_qty: number; duration: number;
 }
 
 export function productByNo(productNo: string): ProductRow | undefined {
@@ -41,7 +41,7 @@ export function rentalLineTotal(product: ProductRow, days: number, qty: number):
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export interface QuoteLineIn {
-  type: "RENTAL" | "COURSE";
+  type: "RENTAL" | "COURSE" | "SERVICE";
   productNo?: string;
   storeId?: string;
   from?: string;
@@ -76,7 +76,7 @@ export function quoteLines(lines: QuoteLineIn[]): { lines: QuotedLine[]; subtota
         unitPrice, lineTotal, deposit: round2(product.security_deposit * qty),
         from: line.from, to: line.to,
       });
-    } else {
+    } else if (line.type === "COURSE") {
       if (!line.sessionId) throw new Error("Course line needs sessionId");
       const session = db
         .prepare(
@@ -89,6 +89,22 @@ export function quoteLines(lines: QuoteLineIn[]): { lines: QuotedLine[]; subtota
         ...line, qty, productNo: session.product_no, productName: session.name,
         unitPrice: session.default_unit_price, lineTotal: round2(session.default_unit_price * qty),
         deposit: 0, from: session.starts_at, to: session.ends_at, storeId: session.store_id,
+      });
+    } else {
+      if (!line.productNo || !line.storeId || !line.from) {
+        throw new Error("Service line needs productNo, storeId, from");
+      }
+      const product = productByNo(line.productNo);
+      if (!product || product.type !== "SERVICE") throw new Error(`Unknown service ${line.productNo}`);
+      const duration = Number((product as ProductRow & { duration?: number }).duration);
+      if (!Number.isFinite(duration) || duration <= 0) throw new Error("Service duration is invalid");
+      const start = new Date(line.from);
+      if (Number.isNaN(start.getTime())) throw new Error("Service start time is invalid");
+      const to = new Date(start.getTime() + duration * 3_600_000).toISOString();
+      out.push({
+        ...line, qty, productNo: product.product_no, productName: product.name,
+        unitPrice: product.default_unit_price, lineTotal: round2(product.default_unit_price * qty),
+        deposit: 0, from: start.toISOString(), to,
       });
     }
   }

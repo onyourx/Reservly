@@ -1,12 +1,15 @@
-import { Router } from "express";
-import { db, uid, now, getSettings, pj, auditLog } from "../db.js";
+import { Router, raw } from "express";
+import fs from "node:fs";
+import path from "node:path";
+import { db, uid, now, getSettings, pj, auditLog, currentTenant, putSettings } from "../db.js";
 import { getActivityTypes, getActivityProducts, navMode, pushProductToNav } from "../lib/nav.js";
 import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels } from "../lib/shopifyAdmin.js";
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
 import { createZoomMeeting } from "../lib/zoom.js";
 import { serializeBooking } from "../lib/bookingService.js";
-import { allowedStoreIds, requireOwner, requirePerm } from "../lib/auth.js";
+import { allowedStoreIds, requireOwner, requirePerm, staffAccess } from "../lib/auth.js";
+import { DATA_DIR } from "../lib/platform.js";
 
 export const catalogRouter = Router();
 
@@ -110,6 +113,10 @@ function serializeProduct(p: any) {
     prices: db.prepare("SELECT description, price FROM product_prices WHERE product_id = ?").all(p.id),
     translations: db.prepare("SELECT locale, name, description FROM product_translations WHERE product_id = ? ORDER BY locale").all(p.id),
     storeQty: db.prepare("SELECT store_id AS storeId, qty FROM product_store_qty WHERE product_id = ?").all(p.id),
+    bookingFields: (db.prepare(`SELECT id,label,type,options,required,sort FROM booking_fields
+      WHERE product_id=? ORDER BY sort,id`).all(p.id) as any[]).map((field) => ({
+      ...field, options: pj<string[]>(field.options, []), required: !!field.required,
+    })),
     addons: db.prepare(`SELECT id,addon_product_no AS addonProductNo,name,price,max_qty AS maxQty,
       required,active,shopify_variant_id AS shopifyVariantId FROM product_addons WHERE product_id=? ORDER BY name`).all(p.id),
     crossSell: db.prepare(`SELECT suggested.product_no AS productNo,suggested.name,suggested.type,
@@ -128,7 +135,7 @@ catalogRouter.post("/products", requirePerm("products"), (req, res) => {
   if (db.prepare("SELECT id FROM products WHERE product_no = ?").get(productNo)) {
     return res.status(409).json({ error: "product_exists" });
   }
-  if (type !== "RENTAL" && type !== "COURSE") {
+  if (!["RENTAL", "COURSE", "SERVICE"].includes(type)) {
     return res.status(400).json({ error: "type_invalid" });
   }
   if (!name) return res.status(400).json({ error: "name_required" });
@@ -137,18 +144,26 @@ catalogRouter.post("/products", requirePerm("products"), (req, res) => {
   const product = {
     id: uid(),
     productNo,
-    type: type as "RENTAL" | "COURSE",
+    type: type as "RENTAL" | "COURSE" | "SERVICE",
     name,
     defaultUnitPrice: Number(req.body?.defaultUnitPrice) || 0,
     securityDeposit: type === "RENTAL" ? Number(req.body?.securityDeposit) || 0 : 0,
-    durationType: type === "RENTAL" ? String(req.body?.durationType ?? "").trim() : "",
-    duration: type === "RENTAL" ? Number(req.body?.duration) || 0 : 0,
+    durationType: type === "SERVICE" ? "Hours" : type === "RENTAL" ? String(req.body?.durationType ?? "").trim() : "",
+    duration: type === "SERVICE" || type === "RENTAL" ? Number(req.body?.duration) || 0 : 0,
     retailItem: String(req.body?.retailItem ?? "").trim(),
     sku: String(req.body?.sku ?? "").trim(),
     minQty: Math.max(1, Number(req.body?.minQty) || 1),
     maxQty: Math.max(1, Number(req.body?.maxQty) || 10),
     availableOnWeb: req.body?.availableOnWeb !== false,
   };
+  if (type === "SERVICE") {
+    if (req.body?.durationType != null && req.body.durationType !== "Hours") {
+      return res.status(400).json({ error: "durationType must be Hours" });
+    }
+    if (!Number.isFinite(Number(req.body?.duration)) || Number(req.body.duration) <= 0) {
+      return res.status(400).json({ error: "duration must be greater than 0" });
+    }
+  }
   db.prepare(`INSERT INTO products (
       id,product_no,type,activity_type,name,name_fr,web_desc_en,web_desc_fr,image_url,
       duration_type,duration,default_unit_price,security_deposit,retail_item,fixed_location,
@@ -281,6 +296,9 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
   if (!p) return res.status(404).json({ error: "Product not found" });
   const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSellProductNos } = req.body ?? {};
   const sku = req.body?.sku === undefined ? null : String(req.body.sku).trim();
+  if (p.type === "SERVICE" && securityDeposit != null && Number(securityDeposit) !== 0) {
+    return res.status(400).json({ error: "SERVICE security_deposit must be 0" });
+  }
   let normalizedCrossSell: string[] | undefined;
   if (crossSellProductNos !== undefined) {
     if (crossSellProductNos !== null && !Array.isArray(crossSellProductNos)) {
@@ -373,6 +391,106 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
     if (fr) db.prepare("UPDATE products SET name_fr=?,web_desc_fr=? WHERE id=?").run(String(fr.name || ""), String(fr.description || ""), p.id);
   }
   res.json({ product: serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(p.id)) });
+});
+
+const FIELD_TYPES = ["text", "textarea", "dropdown", "radio", "checkbox", "date", "number"];
+
+function validateBookingField(value: any, existing?: any): { value?: any; error?: string } {
+  const merged = { ...existing, ...value };
+  const label = String(merged.label ?? "").trim();
+  const type = String(merged.type ?? "text");
+  const options = value?.options === undefined ? pj<string[]>(existing?.options, []) : value.options;
+  if (!label) return { error: "label_required" };
+  if (!FIELD_TYPES.includes(type)) return { error: "type_invalid" };
+  if (!Array.isArray(options) || options.some((option) => typeof option !== "string")) return { error: "options_invalid" };
+  const cleanOptions = options.map((option: string) => option.trim()).filter(Boolean);
+  const requiresOptions = ["dropdown", "radio"];
+  if (requiresOptions.includes(type) && !cleanOptions.length) return { error: "options_required" };
+  return { value: {
+    label, type, options: cleanOptions, required: merged.required ? 1 : 0,
+    sort: Number.isFinite(Number(merged.sort)) ? Number(merged.sort) : 0,
+  } };
+}
+
+catalogRouter.post("/products/:id/fields", requirePerm("products"), (req, res) => {
+  if (!db.prepare("SELECT id FROM products WHERE id=?").get(req.params.id)) {
+    return res.status(404).json({ error: "Product not found" });
+  }
+  const checked = validateBookingField(req.body);
+  if (checked.error) return res.status(400).json({ error: checked.error });
+  const id = uid();
+  const field = checked.value;
+  db.prepare(`INSERT INTO booking_fields(id,product_id,label,type,options,required,sort)
+    VALUES(?,?,?,?,?,?,?)`).run(id, req.params.id, field.label, field.type, JSON.stringify(field.options), field.required, field.sort);
+  return res.json({ id });
+});
+
+catalogRouter.put("/products/:id/fields/:fieldId", requirePerm("products"), (req, res) => {
+  const existing = db.prepare("SELECT * FROM booking_fields WHERE id=? AND product_id=?")
+    .get(req.params.fieldId, req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "Field not found" });
+  const checked = validateBookingField(req.body, existing);
+  if (checked.error) return res.status(400).json({ error: checked.error });
+  const field = checked.value;
+  db.prepare(`UPDATE booking_fields SET label=?,type=?,options=?,required=?,sort=? WHERE id=? AND product_id=?`)
+    .run(field.label, field.type, JSON.stringify(field.options), field.required, field.sort, existing.id, req.params.id);
+  return res.json({ ok: true });
+});
+
+catalogRouter.delete("/products/:id/fields/:fieldId", requirePerm("products"), (req, res) => {
+  db.prepare("DELETE FROM booking_fields WHERE id=? AND product_id=?").run(req.params.fieldId, req.params.id);
+  res.json({ ok: true });
+});
+
+const imageRaw = raw({ type: ["image/jpeg", "image/png", "image/webp"], limit: "5mb" });
+catalogRouter.post("/products/:id/image", requirePerm("products"), imageRaw, (req, res) => {
+  const product = db.prepare("SELECT id FROM products WHERE id=?").get(req.params.id) as any;
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  const ext = extensions[String(req.headers["content-type"] || "").split(";")[0].toLowerCase()];
+  if (!ext || !Buffer.isBuffer(req.body)) return res.status(400).json({ error: "Invalid file type" });
+  const dir = path.join(DATA_DIR, "uploads", "products");
+  fs.mkdirSync(dir, { recursive: true });
+  const base = `${currentTenant().slug}-${product.id}`;
+  for (const oldExt of Object.values(extensions)) {
+    if (oldExt !== ext) fs.rmSync(path.join(dir, `${base}.${oldExt}`), { force: true });
+  }
+  const filename = `${base}.${ext}`;
+  fs.writeFileSync(path.join(dir, filename), req.body);
+  const imageUrl = `/uploads/products/${filename}`;
+  db.prepare("UPDATE products SET image_url=?,updated_at=? WHERE id=?").run(imageUrl, now(), product.id);
+  res.json({ imageUrl });
+});
+
+catalogRouter.delete("/products/:id/image", requirePerm("products"), (req, res) => {
+  const product = db.prepare("SELECT id,image_url FROM products WHERE id=?").get(req.params.id) as any;
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const dir = path.join(DATA_DIR, "uploads", "products");
+  const base = `${currentTenant().slug}-${product.id}`;
+  for (const ext of ["jpg", "png", "webp"]) fs.rmSync(path.join(dir, `${base}.${ext}`), { force: true });
+  db.prepare("UPDATE products SET image_url='',updated_at=? WHERE id=?").run(now(), product.id);
+  res.json({ ok: true });
+});
+
+const termNames: Record<string, string> = { rental: "Rental", course: "Course", service: "Service" };
+const pdfRaw = raw({ type: "application/pdf", limit: "10mb" });
+catalogRouter.post("/terms/:type/pdf", requireOwner, pdfRaw, (req, res) => {
+  const name = termNames[req.params.type];
+  if (!name) return res.status(400).json({ error: "Invalid terms type" });
+  if (!Buffer.isBuffer(req.body)) return res.status(400).json({ error: "Invalid file type" });
+  const dir = path.join(DATA_DIR, "uploads", "terms");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${currentTenant().slug}-${req.params.type}.pdf`), req.body);
+  putSettings({ [`terms${name}Pdf`]: "1" });
+  res.json({ ok: true });
+});
+
+catalogRouter.delete("/terms/:type/pdf", requireOwner, (req, res) => {
+  const name = termNames[req.params.type];
+  if (!name) return res.status(400).json({ error: "Invalid terms type" });
+  fs.rmSync(path.join(DATA_DIR, "uploads", "terms", `${currentTenant().slug}-${req.params.type}.pdf`), { force: true });
+  putSettings({ [`terms${name}Pdf`]: "" });
+  res.json({ ok: true });
 });
 
 catalogRouter.get("/intake-forms", (_req, res) => {
@@ -717,6 +835,62 @@ catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
 catalogRouter.delete("/sessions/:id", requirePerm("sessions"), (req, res) => {
   db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
+});
+
+/**
+ * Attendee roster for a session (staff: bookings OR sessions perms).
+ * Returns session info + attendee list with check-in/no-show status.
+ * Access: store-scoped.
+ */
+catalogRouter.get("/sessions/:id/attendees", (req, res) => {
+  const access = staffAccess(req);
+  if (!access) return res.status(401).json({ error: "auth_required" });
+  if (!access.perms.sessions && !access.perms.bookings) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const session = db.prepare(`SELECT s.*, p.name AS product_name FROM sessions s
+    JOIN products p ON p.id = s.product_id WHERE s.id = ?`).get(req.params.id) as any;
+  if (!session) return res.status(404).json({ error: "Session not found" });
+
+  const allowed = allowedStoreIds(req);
+  if (allowed !== "*" && session.store_id && !allowed.includes(session.store_id)) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  const attendees = db.prepare(`
+    SELECT
+      b.id AS bookingId,
+      b.ref AS bookingRef,
+      b.customer_first AS customerFirst,
+      b.customer_last AS customerLast,
+      b.customer_email AS customerEmail,
+      b.customer_phone AS customerPhone,
+      l.qty,
+      b.status AS bookingStatus,
+      b.checked_in_at AS checkedInAt,
+      b.no_show_at AS noShowAt
+    FROM booking_lines l
+    JOIN bookings b ON b.id = l.booking_id
+    WHERE l.session_id = ? AND b.status NOT IN ('CANCELLED')
+    ORDER BY b.created_at DESC
+  `).all(session.id) as any[];
+
+  res.json({
+    session: {
+      id: session.id,
+      productName: session.product_name,
+      startsAt: session.starts_at,
+      endsAt: session.ends_at,
+      storeId: session.store_id,
+      capacity: session.capacity,
+    },
+    attendees: attendees.map((attendee) => ({
+      ...attendee,
+      checkedInAt: attendee.checkedInAt || null,
+      noShowAt: attendee.noShowAt || null,
+    })),
+  });
 });
 
 // --- Resources (rooms & trainers, class step 3A/3B) --------------------------

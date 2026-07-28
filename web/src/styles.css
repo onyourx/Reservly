@@ -673,6 +673,27 @@ textarea {
 .calendar-date { position: absolute; top: 7px; right: 8px; color: var(--text-soft); font-size: 11px; }
 .calendar-day strong { font-size: 20px; line-height: 1; }
 .calendar-day small { font-size: 10px; color: var(--text-soft); margin-top: 3px; }
+.session-chip-list { width: 100%; margin-top: 18px; }
+.session-chip {
+  display: inline-block;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  width: 100%;
+  text-align: left;
+}
+.session-chip:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.session-chip.full {
+  opacity: 0.6;
+}
 .calendar-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11px; color: var(--text-soft); }
 .calendar-legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; }
 .calendar-legend .open::before { background: var(--ok-soft); border: 1px solid #a9d9c2; }

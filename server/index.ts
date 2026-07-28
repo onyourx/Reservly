@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { seedIfEmpty } from "./seed.js";
 import { requireAuth } from "./lib/auth.js";
 import { startRetentionSchedule } from "./lib/privacy.js";
-import { seedPlatform, tenantMiddleware } from "./lib/platform.js";
+import { DATA_DIR, seedPlatform, tenantMiddleware } from "./lib/platform.js";
 import { adminRouter } from "./routes/admin.js";
 import { catalogRouter } from "./routes/catalog.js";
 import { bookingRouter } from "./routes/booking.js";
@@ -37,11 +37,16 @@ app.use(express.json({ limit: "2mb" }));
 // Tenant selection for everything below (super-admin override > ?t= > default).
 app.use(tenantMiddleware);
 app.use("/api/admin", adminRouter);
+app.use("/uploads", express.static(path.join(DATA_DIR, "uploads")));
 
 // Staff auth gate: everything under /api and /print except health/login/status.
 // Shopify surfaces (/webhooks, /proxy) authenticate by signature instead.
 const OPEN_API = new Set(["/health", "/auth", "/login", "/logout"]);
-app.use("/api", (req, res, next) => (OPEN_API.has(req.path) ? next() : requireAuth(req, res, next)));
+app.use("/api", (req, res, next) => (
+  OPEN_API.has(req.path) || (req.method === "GET" && /^\/terms\/(rental|course|service)$/.test(req.path))
+    ? next()
+    : requireAuth(req, res, next)
+));
 app.use("/print", (req, res, next) => {
   const token = req.query.ptoken;
   if (typeof token === "string" && ["::1", "127.0.0.1", "::ffff:127.0.0.1"].includes(req.ip ?? "") && consumePrintToken(token)) return next();
@@ -57,6 +62,14 @@ app.use("/print", printRouter);
 app.use("/sign", signRouter);   // public: customer e-signature (token-authenticated)
 app.use("/manage", manageRouter); // public: customer cancel/reschedule (token-authenticated)
 app.use("/discover", discoverRouter); // public: cross-product availability search
+
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === "entity.too.large") {
+    const isFileUpload = /^\/api\/(?:products\/[^/]+\/image|terms\/[^/]+\/pdf)$/.test(req.path);
+    return res.status(413).json({ error: isFileUpload ? "File too large" : "Payload too large" });
+  }
+  next(err);
+});
 
 startRetentionSchedule();
 startNotificationSchedule();

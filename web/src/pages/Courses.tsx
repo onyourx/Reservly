@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, qs } from "../api";
-import type { AvailabilitySlot, Resource, ResourceType, Session } from "../api";
+import type {
+  AvailabilitySlot,
+  Resource,
+  ResourceType,
+  Session,
+  SessionAttendees,
+} from "../api";
 import { fmtDate, fmtDateTime, fmtTime, todayISO } from "../format";
+import { useI18n } from "../components/I18n";
+import { Modal } from "../components/Modal";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { EmptyState, ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
@@ -10,12 +19,44 @@ import { EmptyState, ErrorNote, Field, Skeleton, Spinner } from "../components/u
 
 function ScheduleTab() {
   const toast = useToast();
+  const navigate = useNavigate();
+  const { language, t } = useI18n();
   const { storeId, storeName } = useStores();
+  const [view, setView] = useState<"calendar" | "list">("calendar");
+  const [month, setMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
   const [sessions, setSessions] = useState<(Session & { productName?: string })[] | null>(null);
   const [resources, setResources] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [attendeeData, setAttendeeData] = useState<SessionAttendees | null>(null);
+  const [attendeesLoading, setAttendeesLoading] = useState(false);
+
+  const dateKey = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+  const calendarDays = useMemo(() => {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const gridStart = new Date(first);
+    gridStart.setDate(first.getDate() - first.getDay());
+    return Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + index);
+      return date;
+    });
+  }, [month]);
+
+  const range = useMemo(() => {
+    const from = calendarDays[0];
+    const through = calendarDays[calendarDays.length - 1];
+    return {
+      from: `${dateKey(from)}T00:00:00`,
+      to: `${dateKey(through)}T23:59:59.999`,
+    };
+  }, [calendarDays]);
 
   const resourceName = useMemo(() => {
     const map = new Map(resources.map((r) => [r.id, r.name]));
@@ -26,12 +67,16 @@ function ScheduleTab() {
     setLoading(true);
     setError(null);
     api<{ sessions: (Session & { productName?: string })[] }>(
-      `/api/sessions${qs({ from: `${todayISO()}T00:00:00`, storeId })}`,
+      `/api/sessions${qs(
+        view === "calendar"
+          ? { from: range.from, to: range.to, storeId }
+          : { from: `${todayISO()}T00:00:00`, storeId },
+      )}`,
     )
       .then((d) => setSessions(d.sessions))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [storeId]);
+  }, [range, storeId, view]);
 
   useEffect(load, [load]);
   useEffect(() => {
@@ -54,11 +99,129 @@ function ScheduleTab() {
     }
   };
 
+  const sessionsByDate = useMemo(() => {
+    const grouped = new Map<string, (Session & { productName?: string })[]>();
+    for (const session of sessions ?? []) {
+      const key = dateKey(new Date(session.startsAt));
+      grouped.set(key, [...(grouped.get(key) ?? []), session]);
+    }
+    for (const daySessions of grouped.values()) {
+      daySessions.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    }
+    return grouped;
+  }, [sessions]);
+
+  const openAttendees = async (sessionId: string) => {
+    setAttendeesLoading(true);
+    try {
+      setAttendeeData(await api<SessionAttendees>(`/api/sessions/${sessionId}/attendees`));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not load attendees");
+    } finally {
+      setAttendeesLoading(false);
+    }
+  };
+
+  const weekdays = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(language, { weekday: "short" });
+    return Array.from({ length: 7 }, (_, day) =>
+      formatter.format(new Date(2024, 0, 7 + day)),
+    );
+  }, [language]);
+
   return (
     <div className="card">
+      <div className="calendar-head">
+        <div>
+          {view === "calendar" && (
+            <h2 className="card-title">
+              {new Intl.DateTimeFormat(language, { month: "long", year: "numeric" }).format(month)}
+            </h2>
+          )}
+        </div>
+        <div className="calendar-controls">
+          {view === "calendar" && (
+            <>
+              <button
+                type="button"
+                className="btn btn-sm"
+                aria-label={t("Previous month")}
+                onClick={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))}
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  const now = new Date();
+                  setMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                }}
+              >
+                {t("Today")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                aria-label={t("Next month")}
+                onClick={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))}
+              >
+                →
+              </button>
+            </>
+          )}
+          <div className="segmented" aria-label={`${t("Calendar")} / ${t("List")}`}>
+            <button
+              type="button"
+              className={view === "calendar" ? "active" : ""}
+              onClick={() => setView("calendar")}
+            >
+              {t("Calendar")}
+            </button>
+            <button
+              type="button"
+              className={view === "list" ? "active" : ""}
+              onClick={() => setView("list")}
+            >
+              {t("List")}
+            </button>
+          </div>
+        </div>
+      </div>
       {error && <ErrorNote message={error} onRetry={load} />}
       {loading ? (
         <Skeleton rows={5} height={20} />
+      ) : view === "calendar" ? (
+        <div className="calendar-grid">
+          {weekdays.map((weekday) => (
+            <div className="calendar-weekday" key={weekday}>{weekday}</div>
+          ))}
+          {calendarDays.map((date) => {
+            const key = dateKey(date);
+            const isToday = key === todayISO();
+            const outside = date.getMonth() !== month.getMonth();
+            return (
+              <div
+                className={`calendar-day${outside ? " outside" : ""}${isToday ? " today" : ""}`}
+                key={key}
+              >
+                <span className="calendar-date">{date.getDate()}</span>
+                <div className="session-chip-list">
+                  {(sessionsByDate.get(key) ?? []).map((session) => (
+                    <button
+                      type="button"
+                      className={`session-chip${session.booked >= session.capacity ? " full" : ""}`}
+                      key={session.id}
+                      onClick={() => void openAttendees(session.id)}
+                    >
+                      {fmtTime(session.startsAt)} {session.productName ?? session.productNo} ({session.booked}/{session.capacity})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : !sessions || sessions.length === 0 ? (
         <EmptyState
           title="No upcoming sessions"
@@ -117,6 +280,84 @@ function ScheduleTab() {
             </tbody>
           </table>
         </div>
+      )}
+      {attendeesLoading && (
+        <div className="modal-overlay">
+          <div className="modal" role="dialog" aria-modal="true">
+            <div className="modal-body"><Spinner /> {t("Attendees")}</div>
+          </div>
+        </div>
+      )}
+      {attendeeData && !attendeesLoading && (
+        <Modal
+          title={t("Session details")}
+          onClose={() => setAttendeeData(null)}
+          wide
+          footer={
+            <div className="btn-row">
+              <a
+                className="btn btn-primary"
+                href={`/print/enrollment/${attendeeData.session.id}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t("Print enrollment sheet")}
+              </a>
+              <button type="button" className="btn" onClick={() => setAttendeeData(null)}>
+                {t("Close")}
+              </button>
+            </div>
+          }
+        >
+          <h3>{attendeeData.session.productName}</h3>
+          <p className="muted">
+            {fmtDateTime(attendeeData.session.startsAt)} · {storeName(attendeeData.session.storeId)} · {attendeeData.attendees.reduce((sum, attendee) => sum + attendee.qty, 0)}/{attendeeData.session.capacity}
+          </p>
+          <h4>{t("Session attendee roster")}</h4>
+          {attendeeData.attendees.length === 0 ? (
+            <EmptyState title={t("Attendees")} />
+          ) : (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>{t("Name")}</th>
+                    <th>{t("Email")}</th>
+                    <th>{t("Phone")}</th>
+                    <th className="num">{t("Seats")}</th>
+                    <th>{t("Status")}</th>
+                    <th>{t("Check-in")}</th>
+                    <th>{t("No-show")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attendeeData.attendees.map((attendee) => (
+                    <tr
+                      key={attendee.bookingId}
+                      className="clickable-row"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => navigate(`/bookings/${attendee.bookingId}`)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          navigate(`/bookings/${attendee.bookingId}`);
+                        }
+                      }}
+                    >
+                      <td>{attendee.customerFirst} {attendee.customerLast}</td>
+                      <td>{attendee.customerEmail || "—"}</td>
+                      <td>{attendee.customerPhone || "—"}</td>
+                      <td className="num">{attendee.qty}</td>
+                      <td><span className="badge">{attendee.bookingStatus}</span></td>
+                      <td>{attendee.checkedInAt ? fmtDateTime(attendee.checkedInAt) : "—"}</td>
+                      <td>{attendee.noShowAt ? fmtDateTime(attendee.noShowAt) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Modal>
       )}
     </div>
   );

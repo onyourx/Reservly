@@ -112,6 +112,16 @@ CREATE TABLE IF NOT EXISTS product_translations (
   PRIMARY KEY (product_id, locale)
 );
 
+CREATE TABLE IF NOT EXISTS booking_fields (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'text',
+  options TEXT NOT NULL DEFAULT '[]',
+  required INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS product_store_qty (   -- rentable units per store
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
@@ -439,6 +449,7 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE bookings ADD COLUMN no_show_fee_status TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN no_show_draft_order_id TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN intake_responses TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE bookings ADD COLUMN terms_accepted_at TEXT",
     "ALTER TABLE bookings ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE bookings ADD COLUMN id_photo_ref TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN id_photo_at TEXT DEFAULT ''",
@@ -512,8 +523,19 @@ const SETTING_DEFAULTS: Record<string, string> = {
   cancelPartialRefundPercent: "50",
   pickupEarliestTime: "",
   returnByTime: "",
+  serviceOpenTime: "09:00",
+  serviceCloseTime: "17:00",
   rentalIncrementUnit: "day",
   rentalIncrementValue: "1",
+  termsRentalEnabled: "",
+  termsCourseEnabled: "",
+  termsServiceEnabled: "",
+  termsRentalHtml: "",
+  termsCourseHtml: "",
+  termsServiceHtml: "",
+  termsRentalPdf: "",
+  termsCoursePdf: "",
+  termsServicePdf: "",
   sftpHost: "",
   sftpPort: "22",
   sftpUser: "",

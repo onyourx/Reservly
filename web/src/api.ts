@@ -33,7 +33,16 @@ export interface Health {
   sftpConfigured: boolean;
 }
 
-export type ProductType = "RENTAL" | "COURSE";
+export type ProductType = "RENTAL" | "COURSE" | "SERVICE";
+
+export interface BookingField {
+  id: string;
+  label: string;
+  type: "text" | "textarea" | "dropdown" | "radio" | "checkbox" | "date" | "number";
+  options: string[];
+  required: boolean;
+  sort: number;
+}
 
 export interface KitItem {
   itemNo: string;
@@ -85,6 +94,7 @@ export interface Product {
   translations: ProductTranslation[];
   addons: ProductAddon[];
   crossSell?: CrossSellSuggestion[];
+  bookingFields: BookingField[];
 }
 
 export interface CrossSellSuggestion {
@@ -157,7 +167,8 @@ export interface CourseSlot {
 
 export type QuoteLine =
   | { type: "RENTAL"; productNo: string; storeId: string; from: string; to: string; qty: number }
-  | { type: "COURSE"; sessionId: string; qty: number };
+  | { type: "COURSE"; sessionId: string; qty: number }
+  | { type: "SERVICE"; productNo: string; storeId: string; from: string; to: string; qty: number };
 
 export interface QuotedLine {
   type: ProductType;
@@ -289,6 +300,7 @@ export interface Booking {
   noShowFeeStatus?: string;
   noShowDraftOrderId?: string;
   intakeResponses?: Record<string, unknown>;
+  termsAcceptedAt?: string;
   rescheduleCount?: number;
   currency: string;
   navRefs: NavRef[];
@@ -304,6 +316,31 @@ export interface Booking {
   notes: string;
   createdAt: string;
   events: BookingEvent[];
+}
+
+export interface SessionAttendee {
+  bookingId: string;
+  bookingRef: string;
+  customerFirst: string;
+  customerLast: string;
+  customerEmail: string;
+  customerPhone: string;
+  qty: number;
+  bookingStatus: BookingStatus;
+  checkedInAt: string | null;
+  noShowAt: string | null;
+}
+
+export interface SessionAttendees {
+  session: {
+    id: string;
+    productName: string;
+    startsAt: string;
+    endsAt: string;
+    storeId: string;
+    capacity: number;
+  };
+  attendees: SessionAttendee[];
 }
 
 /** Lists return a lighter shape; lines/events may be absent. */
@@ -399,6 +436,15 @@ export interface Settings {
   extensionApproval?: string;
   noShowFeeMode?: "off" | "percent" | "fixed";
   noShowFeeValue?: string;
+  termsRentalEnabled?: string;
+  termsCourseEnabled?: string;
+  termsServiceEnabled?: string;
+  termsRentalHtml?: string;
+  termsCourseHtml?: string;
+  termsServiceHtml?: string;
+  termsRentalPdf?: string;
+  termsCoursePdf?: string;
+  termsServicePdf?: string;
   sftpHost?: string;
   sftpPort?: string;
   sftpUser?: string;

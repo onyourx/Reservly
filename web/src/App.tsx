@@ -1,4 +1,4 @@
-import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { LogoMark } from "./components/Logo";
 import { AuthGate, useAuth, type AuthAccess } from "./components/AuthGate";
@@ -44,7 +44,9 @@ const NAV_ITEMS: (NavItem | NavGroup)[] = [
   {
     label: "Settings",
     children: [
-      { to: "/products", label: "Products", end: false, need: "products" },
+      { to: "/products/rentals", label: "Rentals", end: false, need: "products" },
+      { to: "/products/courses", label: "Courses", end: false, need: "products" },
+      { to: "/products/services", label: "Services", end: false, need: "products" },
       { to: "/fleet", label: "Rental fleet", end: false, need: "products" },
       { to: "/courses", label: "Sessions & Resources", end: false, need: "sessions" },
       { to: "/availability-rules", label: "Hours & blackouts", end: false, need: "availability" },
@@ -289,7 +291,10 @@ function Shell() {
             <Route path="/bookings" element={<RequirePerm need="bookings"><BookingsList /></RequirePerm>} />
             <Route path="/bookings/new" element={<RequirePerm need="bookings"><BookingNew /></RequirePerm>} />
             <Route path="/bookings/:id" element={<RequirePerm need="bookings"><BookingDetail /></RequirePerm>} />
-            <Route path="/products" element={<RequirePerm need="products"><ProductsList /></RequirePerm>} />
+            <Route path="/products/rentals" element={<RequirePerm need="products"><ProductsList typeFilter="RENTAL" /></RequirePerm>} />
+            <Route path="/products/courses" element={<RequirePerm need="products"><ProductsList typeFilter="COURSE" /></RequirePerm>} />
+            <Route path="/products/services" element={<RequirePerm need="products"><ProductsList typeFilter="SERVICE" /></RequirePerm>} />
+            <Route path="/products" element={<Navigate to="/products/rentals" replace />} />
             <Route path="/fleet" element={<RequirePerm need="products"><Fleet /></RequirePerm>} />
             <Route path="/products/:id" element={<RequirePerm need="products"><ProductDetail /></RequirePerm>} />
             <Route path="/courses" element={<RequirePerm need="sessions"><Courses /></RequirePerm>} />

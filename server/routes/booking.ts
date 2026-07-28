@@ -1,9 +1,11 @@
 import { Router, raw } from "express";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { db, now, j, localDate, auditLog, getSettings, currentTenant, DEFAULT_TENANT_SLUG } from "../db.js";
 import { quoteLines, round2 } from "../engine/pricing.js";
-import { rentalAvailability, courseSlots } from "../engine/availability.js";
-import { createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
+import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
+import { BookingValidationError, createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
 import { cancelReservation, webPosSuspend } from "../lib/nav.js";
 import { encryptId } from "../lib/crypto.js";
 import { emit } from "../lib/events.js";
@@ -15,6 +17,7 @@ import { sendMail } from "../lib/mailer.js";
 import { listPrinters, printDocument } from "../lib/printing.js";
 import { refundQuote, validateRentalWindow } from "../lib/policy.js";
 import { deleteIdPhoto, fetchIdPhoto, sftpConfigured, uploadIdPhoto } from "../lib/idPhotos.js";
+import { DATA_DIR } from "../lib/platform.js";
 
 export const bookingRouter = Router();
 
@@ -110,6 +113,37 @@ bookingRouter.get("/availability/course", (req, res) => {
   res.json({ slots: courseSlots(productNo, from || new Date().toISOString(), Number(days) || 60) });
 });
 
+bookingRouter.get("/availability/service", (req, res) => {
+  try {
+    const { productNo, storeId, date } = req.query as Record<string, string>;
+    if (!productNo || !storeId || !date) return res.status(400).json({ error: "productNo, storeId, date are required" });
+    res.json(serviceSlots(productNo, storeId, date));
+  } catch (err) {
+    res.status(400).json({ error: String((err as Error).message ?? err) });
+  }
+});
+
+bookingRouter.get("/terms/:type", (req, res) => {
+  const names: Record<string, string> = { rental: "Rental", course: "Course", service: "Service" };
+  const name = names[req.params.type];
+  if (!name) return res.status(404).json({ error: "Not found" });
+  const settings = getSettings();
+  if (settings[`terms${name}Pdf`] === "1") {
+    const file = path.join(DATA_DIR, "uploads", "terms", `${currentTenant().slug}-${req.params.type}.pdf`);
+    if (fs.existsSync(file)) {
+      res.setHeader("Content-Type", "application/pdf");
+      return res.send(fs.readFileSync(file));
+    }
+  }
+  const terms = settings[`terms${name}Html`];
+  if (!terms) return res.status(404).json({ error: "Not found" });
+  res.type("html").send(`<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><style>body{font:16px sans-serif;max-width:800px;margin:0 auto;padding:20px;line-height:1.6}</style></head>
+<body>${terms}</body>
+</html>`);
+});
+
 bookingRouter.post("/quote", (req, res) => {
   try {
     const q = quoteLines(req.body?.lines ?? []);
@@ -174,6 +208,8 @@ bookingRouter.post("/bookings", requirePerm("bookings"), async (req, res) => {
       channel: req.body?.channel === "WEB" ? "WEB" : "STAFF",
       notes: req.body?.notes,
       lines: req.body?.lines ?? [],
+      fieldResponses: req.body?.fieldResponses,
+      termsAccepted: req.body?.termsAccepted,
     });
     const settings = getSettings();
     const isConfigured = settings.shopifyShop?.trim() && settings.shopifyApiSecret;
@@ -187,7 +223,7 @@ bookingRouter.post("/bookings", requirePerm("bookings"), async (req, res) => {
     }
     res.json({ booking });
   } catch (err) {
-    res.status(400).json({ error: String((err as Error).message ?? err) });
+    res.status(400).json(err instanceof BookingValidationError ? err.payload : { error: String((err as Error).message ?? err) });
   }
 });
 

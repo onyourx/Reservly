@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
-import type { Health, KitItem, Product, ProductAddon, ProductTranslation, Resource, Session, Settings } from "../api";
+import type { BookingField, Health, KitItem, Product, ProductAddon, ProductTranslation, Resource, Session, Settings } from "../api";
 import { fmtDateTime, localToISO, money } from "../format";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
@@ -26,6 +26,14 @@ export function ProductDetail() {
   const [health, setHealth] = useState<Health | null>(null);
   const [chanOnlineStore, setChanOnlineStore] = useState(true);
   const [chanPos, setChanPos] = useState(true);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [confirmImageRemove, setConfirmImageRemove] = useState(false);
+  const [fieldForm, setFieldForm] = useState<{
+    id?: string; label: string; type: BookingField["type"]; options: string; required: boolean; sort: string;
+  } | null>(null);
+  const [savingField, setSavingField] = useState(false);
+  const [confirmFieldDelete, setConfirmFieldDelete] = useState<string | null>(null);
 
   // Editable fields
   const [imageUrl, setImageUrl] = useState("");
@@ -181,6 +189,111 @@ export function ProductDetail() {
     }
   };
 
+  const uploadImage = async (file?: File) => {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.error("Choose a JPEG, PNG, or WebP image");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be 5 MB or smaller");
+      return;
+    }
+    setUploadingImage(true);
+    try {
+      const response = await fetch(`/api/products/${id}/image`, {
+        method: "POST", headers: { "Content-Type": file.type }, body: file,
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error || response.statusText);
+      }
+      toast.success("Image uploaded");
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Image upload failed");
+    } finally {
+      setUploadingImage(false);
+      if (imageInput.current) imageInput.current.value = "";
+    }
+  };
+
+  const removeImage = async () => {
+    try {
+      await api(`/api/products/${id}/image`, { method: "DELETE" });
+      setConfirmImageRemove(false);
+      toast.success("Image removed");
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not remove image");
+    }
+  };
+
+  const openFieldForm = (field?: BookingField) => setFieldForm(field ? {
+    id: field.id, label: field.label, type: field.type, options: field.options.join(", "),
+    required: field.required, sort: String(field.sort),
+  } : {
+    label: "", type: "text", options: "", required: false,
+    sort: String(Math.max(-1, ...(product?.bookingFields ?? []).map((item) => item.sort)) + 1),
+  });
+
+  const saveField = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!fieldForm) return;
+    const options = fieldForm.options.split(",").map((option) => option.trim()).filter(Boolean);
+    if (["dropdown", "radio"].includes(fieldForm.type) && !options.length) {
+      toast.error("Options are required");
+      return;
+    }
+    setSavingField(true);
+    try {
+      await api(fieldForm.id
+        ? `/api/products/${id}/fields/${fieldForm.id}`
+        : `/api/products/${id}/fields`, {
+        method: fieldForm.id ? "PUT" : "POST",
+        body: {
+          label: fieldForm.label.trim(), type: fieldForm.type, options,
+          required: fieldForm.required, sort: Number(fieldForm.sort) || 0,
+        },
+      });
+      toast.success(t(fieldForm.id ? "Field updated" : "Field added"));
+      setFieldForm(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save field");
+    } finally {
+      setSavingField(false);
+    }
+  };
+
+  const deleteField = async (fieldId: string) => {
+    try {
+      await api(`/api/products/${id}/fields/${fieldId}`, { method: "DELETE" });
+      setConfirmFieldDelete(null);
+      toast.success(t("Field deleted"));
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not delete field");
+    }
+  };
+
+  const moveField = async (field: BookingField, direction: -1 | 1) => {
+    if (!product) return;
+    const fields = [...(product.bookingFields ?? [])].sort((a, b) => a.sort - b.sort);
+    const index = fields.findIndex((item) => item.id === field.id);
+    const other = fields[index + direction];
+    if (!other) return;
+    try {
+      await Promise.all([
+        api(`/api/products/${id}/fields/${field.id}`, { method: "PUT", body: { sort: other.sort } }),
+        api(`/api/products/${id}/fields/${other.id}`, { method: "PUT", body: { sort: field.sort } }),
+      ]);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not reorder fields");
+    }
+  };
+
   const addSessions = async () => {
     if (!product || !sessStart || !sessEnd || !sessStore) {
       toast.error("Start, end and store are required");
@@ -254,12 +367,12 @@ export function ProductDetail() {
       <div className="page-head">
         <div>
           <div className="faint">
-            <Link to={`/products?type=${p.type}`}>Products</Link> /{" "}
+            <Link to={`/products/${p.type === "RENTAL" ? "rentals" : p.type === "COURSE" ? "courses" : "services"}`}>{t(p.type === "RENTAL" ? "Rentals" : p.type === "COURSE" ? "Courses" : "Services")}</Link> /{" "}
             <span className="mono">{p.productNo}</span>
           </div>
           <h1>{p.name}</h1>
           <div className="page-sub">
-            {p.type === "RENTAL" ? "Rental equipment" : "Course"} · {money(p.defaultUnitPrice)}
+            {p.type === "RENTAL" ? "Rental equipment" : p.type === "COURSE" ? "Course" : "Service"} · {money(p.defaultUnitPrice)}
             {p.securityDeposit > 0 && ` · deposit ${money(p.securityDeposit)}`}
           </div>
         </div>
@@ -290,6 +403,37 @@ export function ProductDetail() {
           >
             {saving && <Spinner small />} Save changes
           </button>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 18 }}>
+        <h2 className="card-title">{t("Product image")}</h2>
+        {p.imageUrl ? (
+          <img src={p.imageUrl} alt={p.name} style={{ display: "block", maxWidth: "100%", maxHeight: 240, objectFit: "contain", marginBottom: 12 }} />
+        ) : (
+          <div className="faint" style={{ marginBottom: 12 }}>{t("No image")}</div>
+        )}
+        <input
+          ref={imageInput}
+          hidden
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={(event) => void uploadImage(event.target.files?.[0])}
+        />
+        <div className="btn-row">
+          <button type="button" className="btn" disabled={uploadingImage} onClick={() => imageInput.current?.click()}>
+            {uploadingImage && <Spinner small />} {t("Upload image")}
+          </button>
+          {p.imageUrl && (
+            confirmImageRemove ? (
+              <>
+                <button type="button" className="btn btn-danger" onClick={() => void removeImage()}>{t("Confirm remove")}</button>
+                <button type="button" className="btn" onClick={() => setConfirmImageRemove(false)}>{t("Cancel")}</button>
+              </>
+            ) : (
+              <button type="button" className="btn" onClick={() => setConfirmImageRemove(true)}>{t("Remove image")}</button>
+            )
+          )}
         </div>
       </div>
 
@@ -544,6 +688,64 @@ export function ProductDetail() {
             }}>{t("Add suggestion")}</button>
           </div>
         </div>
+      </div>
+
+      <div style={{ height: 18 }} />
+      <div className="card">
+        <div className="page-head" style={{ marginBottom: 12 }}>
+          <h2 className="card-title">{t("Booking form fields")}</h2>
+          {!fieldForm && <button type="button" className="btn btn-sm" onClick={() => openFieldForm()}>{t("Add field")}</button>}
+        </div>
+        {fieldForm && (
+          <form onSubmit={(event) => void saveField(event)} className="translation-panel" style={{ marginBottom: 14 }}>
+            <div className="form-grid-3">
+              <Field label="Label"><input required value={fieldForm.label} onChange={(e) => setFieldForm({ ...fieldForm, label: e.target.value })} /></Field>
+              <Field label={t("Type")}>
+                <select value={fieldForm.type} onChange={(e) => setFieldForm({ ...fieldForm, type: e.target.value as BookingField["type"] })}>
+                  {(["text", "textarea", "dropdown", "radio", "checkbox", "date", "number"] as const).map((type) => (
+                    <option key={type} value={type}>{t({ text: "Text", textarea: "Text area", dropdown: "Dropdown", radio: "Radio buttons", checkbox: "Checkboxes", date: "Date", number: "Number" }[type])}</option>
+                  ))}
+                </select>
+              </Field>
+              {["dropdown", "radio"].includes(fieldForm.type) && (
+                <Field label="Options" hint="Comma-separated">
+                  <input required value={fieldForm.options} onChange={(e) => setFieldForm({ ...fieldForm, options: e.target.value })} />
+                </Field>
+              )}
+              <Field label="Sort"><input type="number" value={fieldForm.sort} onChange={(e) => setFieldForm({ ...fieldForm, sort: e.target.value })} /></Field>
+              <label className="checkbox-row"><input type="checkbox" checked={fieldForm.required} onChange={(e) => setFieldForm({ ...fieldForm, required: e.target.checked })} />Required</label>
+            </div>
+            <div className="btn-row" style={{ marginTop: 12 }}>
+              <button type="submit" className="btn btn-primary" disabled={savingField}>{savingField && <Spinner small />} {t("Save field")}</button>
+              <button type="button" className="btn" disabled={savingField} onClick={() => setFieldForm(null)}>{t("Cancel")}</button>
+            </div>
+          </form>
+        )}
+        {!p.bookingFields?.length ? (
+          <EmptyState title={t("No booking form fields")} />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Label</th><th>{t("Type")}</th><th>Required</th><th>Options</th><th>Sort</th><th>Actions</th></tr></thead>
+              <tbody>
+                {[...p.bookingFields].sort((a, b) => a.sort - b.sort).map((field, index, fields) => (
+                  <tr key={field.id}>
+                    <td>{field.label}</td><td>{t({ text: "Text", textarea: "Text area", dropdown: "Dropdown", radio: "Radio buttons", checkbox: "Checkboxes", date: "Date", number: "Number" }[field.type])}</td>
+                    <td>{field.required ? "Yes" : "No"}</td><td className="muted">{field.options.join(", ") || "—"}</td><td>{field.sort}</td>
+                    <td><div className="btn-row">
+                      <button type="button" className="btn btn-sm" disabled={index === 0} onClick={() => void moveField(field, -1)}>↑</button>
+                      <button type="button" className="btn btn-sm" disabled={index === fields.length - 1} onClick={() => void moveField(field, 1)}>↓</button>
+                      <button type="button" className="btn btn-sm" onClick={() => openFieldForm(field)}>{t("Edit")}</button>
+                      {confirmFieldDelete === field.id ? (
+                        <><button type="button" className="btn btn-sm btn-danger" onClick={() => void deleteField(field.id)}>{t("Confirm remove")}</button><button type="button" className="btn btn-sm" onClick={() => setConfirmFieldDelete(null)}>{t("Cancel")}</button></>
+                      ) : <button type="button" className="btn btn-sm" onClick={() => setConfirmFieldDelete(field.id)}>{t("Delete")}</button>}
+                    </div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div style={{ height: 18 }} />

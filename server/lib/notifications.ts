@@ -44,6 +44,8 @@ export function scheduleBookingReminders(bookingId: string) {
   const dates = db.prepare(
     "SELECT MIN(date_from) starts, MAX(date_to) ends FROM booking_lines WHERE booking_id=?",
   ).get(bookingId) as { starts?: string; ends?: string } | undefined;
+  const lines = db.prepare("SELECT type FROM booking_lines WHERE booking_id=?").all(bookingId) as { type: string }[];
+  const allService = lines.length > 0 && lines.every((l) => l.type === "SERVICE");
   const insert = db.prepare(`INSERT INTO notification_jobs(id,booking_id,type,scheduled_at,status,created_at)
     VALUES(?,?,?,?,'PENDING',?)`);
 
@@ -52,6 +54,8 @@ export function scheduleBookingReminders(bookingId: string) {
     { type: "REMINDER_RETURN", date: dates?.ends, hours: settings.reminderReturnHours },
   ];
   for (const reminder of reminders) {
+    // Skip REMINDER_RETURN for service-only bookings
+    if (allService && reminder.type === "REMINDER_RETURN") continue;
     if (!reminder.date) continue;
     const at = new Date(reminder.date).getTime() - Math.max(0, Number(reminder.hours) || 0) * 3_600_000;
     if (at > Date.now()) {

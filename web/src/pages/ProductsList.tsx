@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, qs } from "../api";
 import type { Health, Product, ProductType } from "../api";
 import { money } from "../format";
@@ -22,12 +22,10 @@ const emptyForm = {
   availableOnWeb: true,
 };
 
-export function ProductsList() {
+export function ProductsList({ typeFilter = "RENTAL" }: { typeFilter?: ProductType }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const toast = useToast();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const type = (searchParams.get("type") as ProductType | null) ?? "RENTAL";
 
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -37,7 +35,7 @@ export function ProductsList() {
   const [syncing, setSyncing] = useState(false);
   const [adding, setAdding] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState({ ...emptyForm, type: typeFilter });
   const [health, setHealth] = useState<Health | null>(null);
   const [localization, setLocalization] = useState<{
     languages: string[]; summary: { complete: number; incomplete: number; total: number };
@@ -52,11 +50,15 @@ export function ProductsList() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    api<{ products: Product[] }>(`/api/products${qs({ type, q: debouncedQ })}`)
+    api<{ products: Product[] }>(`/api/products${qs({ type: typeFilter, q: debouncedQ })}`)
       .then((d) => setProducts(d.products))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [type, debouncedQ]);
+  }, [typeFilter, debouncedQ]);
+
+  useEffect(() => {
+    setForm({ ...emptyForm, type: typeFilter });
+  }, [typeFilter]);
 
   useEffect(load, [load]);
   useEffect(() => {
@@ -102,7 +104,7 @@ export function ProductsList() {
       });
       toast.success(t("Product created"));
       setAdding(false);
-      setForm(emptyForm);
+      setForm({ ...emptyForm, type: typeFilter });
       navigate(`/products/${product.id}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not create product";
@@ -116,7 +118,7 @@ export function ProductsList() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>{t("Products")}</h1>
+          <h1>{t(typeFilter === "RENTAL" ? "Rentals" : typeFilter === "COURSE" ? "Courses" : "Services")}</h1>
           <div className="page-sub">{t("Rental equipment and courses synced from NAV")}</div>
         </div>
         <div className="btn-row">
@@ -132,23 +134,6 @@ export function ProductsList() {
             {syncing && <Spinner small />} {t("Sync from NAV")}
           </button>
         </div>
-      </div>
-
-      <div className="tabs">
-        <button
-          type="button"
-          className={`tab ${type === "RENTAL" ? "active" : ""}`}
-          onClick={() => setSearchParams({ type: "RENTAL" })}
-        >
-          Rentals
-        </button>
-        <button
-          type="button"
-          className={`tab ${type === "COURSE" ? "active" : ""}`}
-          onClick={() => setSearchParams({ type: "COURSE" })}
-        >
-          Courses
-        </button>
       </div>
 
       {localization && (
@@ -179,7 +164,7 @@ export function ProductsList() {
       ) : !products || products.length === 0 ? (
         <div className="card">
           <EmptyState
-            title={`No ${type === "RENTAL" ? "rental" : "course"} products`}
+            title={`No ${typeFilter === "RENTAL" ? "rental" : typeFilter === "COURSE" ? "course" : "service"} products`}
             hint='Use "Sync from NAV" to pull the catalogue.'
           />
         </div>
@@ -240,10 +225,11 @@ export function ProductsList() {
               <Field label={t("Type")}>
                 <select
                   value={form.type}
-                  onChange={(e) => setForm({ ...form, type: e.target.value as ProductType })}
+                  disabled
                 >
                   <option value="RENTAL">RENTAL</option>
                   <option value="COURSE">COURSE</option>
+                  <option value="SERVICE">SERVICE</option>
                 </select>
               </Field>
               <Field label={t("Product number")}>
@@ -271,18 +257,24 @@ export function ProductsList() {
                     <input type="number" min="0" step="1" value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value })} />
                   </Field>
                 </>
-              ) : (
+              ) : form.type === "COURSE" ? (
                 <div className="faint">Course scheduling is configured on the Courses page.</div>
+              ) : (
+                <Field label="Duration (hours)" hint="Appointment length in hours">
+                  <input type="number" min="0" step="0.25" value={form.duration} onChange={(e) => setForm({ ...form, duration: e.target.value, durationType: "Hours" })} />
+                </Field>
               )}
               <Field label={t("SKU")}>
                 <input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
               </Field>
-              <Field label="Minimum quantity">
-                <input type="number" min="1" value={form.minQty} onChange={(e) => setForm({ ...form, minQty: e.target.value })} />
-              </Field>
-              <Field label="Maximum quantity">
-                <input type="number" min="1" value={form.maxQty} onChange={(e) => setForm({ ...form, maxQty: e.target.value })} />
-              </Field>
+              {form.type !== "SERVICE" && <>
+                <Field label="Minimum quantity">
+                  <input type="number" min="1" value={form.minQty} onChange={(e) => setForm({ ...form, minQty: e.target.value })} />
+                </Field>
+                <Field label="Maximum quantity">
+                  <input type="number" min="1" value={form.maxQty} onChange={(e) => setForm({ ...form, maxQty: e.target.value })} />
+                </Field>
+              </>}
             </div>
             <label className="checkbox-row" style={{ marginTop: 14 }}>
               <input type="checkbox" checked={form.availableOnWeb} onChange={(e) => setForm({ ...form, availableOnWeb: e.target.checked })} />

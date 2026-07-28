@@ -9,9 +9,16 @@ import { idLast4 } from "./crypto.js";
 import { emit } from "./events.js";
 import { scheduleBookingReminders } from "./notifications.js";
 import { validateRentalWindow } from "./policy.js";
+import { serviceSlots } from "../engine/availability.js";
 
 export interface CustomerIn {
   email: string; firstName?: string; lastName?: string; phone?: string; b2b?: boolean;
+}
+
+export class BookingValidationError extends Error {
+  constructor(public payload: Record<string, unknown>) {
+    super(String(payload.error || "Booking validation failed"));
+  }
 }
 
 function newRef(): string {
@@ -29,6 +36,8 @@ export async function createBooking(input: {
   paid?: boolean;
   holdToken?: string;
   intakeResponses?: Record<string, unknown>;
+  fieldResponses?: Record<string, unknown>;
+  termsAccepted?: boolean;
   addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId?: string }[];
 }) {
   if (!input.customer?.email) throw new Error("customer.email is required");
@@ -38,6 +47,72 @@ export async function createBooking(input: {
     if (line.type !== "RENTAL") continue;
     const validation = validateRentalWindow(line.from, line.to);
     if (!validation.ok) throw new Error(validation.error);
+  }
+  for (const line of quoted.lines) {
+    if (line.type !== "SERVICE") continue;
+    const storeId = line.storeId || input.storeId;
+    if (!storeId) throw new Error("Service line needs storeId");
+    const date = line.from.slice(0, 10);
+    const time = line.from.slice(11, 16);
+    if (!serviceSlots(line.productNo, storeId, date).slots.includes(time)) {
+      throw new BookingValidationError({ error: "Slot no longer available" });
+    }
+    const capacity = db.prepare(`SELECT COALESCE(q.qty,1) AS qty FROM products p
+      LEFT JOIN product_store_qty q ON q.product_id=p.id AND q.store_id=?
+      WHERE p.product_no=?`).get(storeId, line.productNo) as { qty: number } | undefined;
+    const booked = db.prepare(`SELECT COALESCE(SUM(l.qty),0) AS n FROM booking_lines l
+      JOIN bookings b ON b.id=l.booking_id
+      WHERE l.type='SERVICE' AND l.product_no=? AND l.store_id=?
+        AND l.date_from<=? AND l.date_to>?
+      AND b.status IN ('RESERVED','POS_PENDING','PAID','PICKED_UP')`)
+      .get(line.productNo, storeId, line.from, line.from) as { n: number };
+    const requested = quoted.lines.filter((candidate) => candidate.type === "SERVICE"
+      && candidate.productNo === line.productNo
+      && (candidate.storeId || input.storeId) === storeId
+      && candidate.from === line.from).reduce((sum, candidate) => sum + candidate.qty, 0);
+    if (booked.n + requested > Math.max(0, Number(capacity?.qty ?? 1))) {
+      throw new BookingValidationError({ error: "Slot no longer available" });
+    }
+  }
+
+  const productNos = [...new Set(quoted.lines.map((line) => line.productNo))];
+  const placeholders = productNos.map(() => "?").join(",");
+  const fields = db.prepare(`SELECT f.* FROM booking_fields f JOIN products p ON p.id=f.product_id
+    WHERE p.product_no IN (${placeholders}) ORDER BY f.sort,f.id`).all(...productNos) as any[];
+  const responses = input.fieldResponses ?? input.intakeResponses ?? {};
+  const storedResponses: { fieldId: string; label: string; value: unknown }[] = [];
+  for (const field of fields) {
+    const hasValue = Object.prototype.hasOwnProperty.call(responses, field.id);
+    let value = responses[field.id];
+    if (field.required && (!hasValue || value === "" || value == null)) {
+      throw new BookingValidationError({ error: "field_required", fieldId: field.id });
+    }
+    if (!hasValue || value === "" || value == null) continue;
+    const options = pj<string[]>(field.options, []);
+    let valid = true;
+    if (field.type === "dropdown" || field.type === "radio") {
+      valid = typeof value === "string" && options.includes(value);
+    } else if (field.type === "checkbox") {
+      if (typeof value !== "boolean") {
+        if (value === "true" || value === 1 || value === "1") value = true;
+        else if (value === "false" || value === 0 || value === "0") value = false;
+        else valid = false;
+      }
+    } else if (field.type === "date") {
+      valid = typeof value === "string" && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value)
+        && !Number.isNaN(new Date(value.length === 10 ? `${value}T00:00:00Z` : value).getTime());
+    } else if (field.type === "number") {
+      valid = value !== "" && Number.isFinite(Number(value));
+    }
+    if (!valid) throw new BookingValidationError({ error: "field_invalid", fieldId: field.id });
+    storedResponses.push({ fieldId: field.id, label: field.label, value });
+  }
+
+  const settings = getSettings();
+  const termsTypes = [...new Set(quoted.lines.map((line) => line.type.toLowerCase()))]
+    .filter((type) => settings[`terms${type[0].toUpperCase()}${type.slice(1)}Enabled`] === "1");
+  if (termsTypes.length && input.termsAccepted !== true) {
+    throw new BookingValidationError({ error: "terms_required", types: termsTypes });
   }
   const addonTotal = round2((input.addons || []).reduce((sum, a) => sum + (Number(a.unitPrice) || 0) * Math.max(1, Number(a.qty) || 1), 0));
   const commerceTotal = round2(quoted.subtotal + addonTotal);
@@ -52,15 +127,15 @@ export async function createBooking(input: {
   db.prepare(
     `INSERT INTO bookings (id, ref, type, status, channel, store_id, customer_email, customer_first,
        customer_last, customer_phone, customer_b2b, subtotal, deposit, total, currency,
-       shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CAD', ?, ?, ?, ?, ?, ?, ?)`,
+       shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, terms_accepted_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CAD', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, ref, type, status, input.channel, input.storeId ?? null,
     input.customer.email, input.customer.firstName ?? "", input.customer.lastName ?? "",
     input.customer.phone ?? "", input.customer.b2b ? 1 : 0,
     commerceTotal, quoted.deposit, commerceTotal,
     input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "", manageToken,
-    j(input.intakeResponses ?? {}), now(), now(),
+    j(storedResponses), input.termsAccepted === true ? now() : null, now(), now(),
   );
 
   for (const line of quoted.lines) {
@@ -175,6 +250,7 @@ export function serializeBooking(id: string) {
     noShowFee: Number(b.no_show_fee || 0), noShowFeeStatus: b.no_show_fee_status || "",
     noShowDraftOrderId: b.no_show_draft_order_id || "",
     intakeResponses: pj(b.intake_responses, {}), rescheduleCount: b.reschedule_count || 0,
+    termsAcceptedAt: b.terms_accepted_at || "",
     addons: db.prepare(`SELECT addon_product_no AS productNo,name,qty,unit_price AS unitPrice,
       shopify_variant_id AS shopifyVariantId FROM booking_addons WHERE booking_id=?`).all(b.id),
     events,

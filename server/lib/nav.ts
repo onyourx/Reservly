@@ -102,7 +102,7 @@ export interface NavActivityProduct {
 
 export interface NavProductPush {
   productNo: string;
-  type: "RENTAL" | "COURSE";
+  type: "RENTAL" | "COURSE" | "SERVICE";
   name: string;
   defaultUnitPrice?: number;
   securityDeposit?: number;

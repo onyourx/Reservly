@@ -11,7 +11,7 @@ import { tenantALS, initSchema, DEFAULT_TENANT_SLUG, now, uid } from "../db.js";
 import { getStaffSession, staffTokenOf } from "./staffSessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = process.env.BOOKING_DATA_DIR || path.join(__dirname, "..", "..");
+export const DATA_DIR = process.env.BOOKING_DATA_DIR || path.join(__dirname, "..", "..");
 const SUPERADMIN_EMAIL = "serge@onyourx.com";
 
 export const platformDb = new Database(path.join(DATA_DIR, "platform.db"));

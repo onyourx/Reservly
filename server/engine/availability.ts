@@ -3,7 +3,7 @@
 //    lines, evaluated per calendar day. In live mode NAV's GetActivityAvailability is
 //    the authority; local holds still apply on top so unpaid web carts can't double-book.
 //  - Courses: session capacity minus booked seats.
-import { db } from "../db.js";
+import { db, getSettings } from "../db.js";
 import { getActivityAvailability, navMode } from "../lib/nav.js";
 
 const ACTIVE = "('RESERVED','POS_PENDING','PAID','PICKED_UP')";
@@ -132,4 +132,62 @@ export function courseSlots(productNo: string, from: string, daysAhead: number) 
       availableByRules: ruleAllows(productNo, s.store_id, s.starts_at),
     };
   }).filter((s) => s.availableByRules);
+}
+
+export function serviceSlots(productNo: string, storeId: string, dateISO: string): { slots: string[] } {
+  const date = String(dateISO).slice(0, 10);
+  const parsedDate = new Date(`${date}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime())
+    || parsedDate.toISOString().slice(0, 10) !== date) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+  const product = db.prepare(
+    `SELECT p.id,p.duration,COALESCE(q.qty,1) AS capacity
+     FROM products p LEFT JOIN product_store_qty q ON q.product_id=p.id AND q.store_id=?
+     WHERE p.product_no=? AND p.type='SERVICE'`,
+  ).get(storeId, productNo) as { id: string; duration: number; capacity: number } | undefined;
+  if (!product) throw new Error("Service product not found");
+  const durationMinutes = Math.round(Number(product.duration) * 60);
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) throw new Error("Service duration is invalid");
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (date < today) return { slots: [] };
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const openings = db.prepare(`SELECT from_time,to_time FROM availability_rules
+    WHERE kind='OPENING' AND weekday=? AND
+      ((scope_type='PRODUCT' AND scope_id=?) OR (scope_type='STORE' AND scope_id=?))
+    ORDER BY from_time,to_time`).all(weekday, product.id, storeId) as { from_time: string; to_time: string }[];
+  const settings = getSettings();
+  const windows = openings.length ? openings : [{
+    from_time: settings.serviceOpenTime || "09:00",
+    to_time: settings.serviceCloseTime || "17:00",
+  }];
+  // Guard against inverted service hours
+  if ((windows[0]?.from_time || "09:00") >= (windows[0]?.to_time || "17:00")) {
+    console.warn(`[availability] inverted service hours (${windows[0]?.from_time} >= ${windows[0]?.to_time}), returning no slots`);
+    return { slots: [] };
+  }
+  const nowMs = Date.now();
+  const bookedStmt = db.prepare(`SELECT COALESCE(SUM(l.qty),0) AS n
+    FROM booking_lines l JOIN bookings b ON b.id=l.booking_id
+    WHERE l.type='SERVICE' AND l.product_no=? AND l.store_id=?
+      AND l.date_from<=? AND l.date_to>?
+      AND b.status IN ${ACTIVE}`);
+  const slots: string[] = [];
+  for (const window of windows) {
+    const [fromHour, fromMinute] = window.from_time.slice(0, 5).split(":").map(Number);
+    const [toHour, toMinute] = window.to_time.slice(0, 5).split(":").map(Number);
+    let minute = fromHour * 60 + fromMinute;
+    const endMinute = toHour * 60 + toMinute;
+    while (minute + durationMinutes <= endMinute) {
+      const hhmm = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(Math.round(minute % 60)).padStart(2, "0")}`;
+      const start = `${date}T${hhmm}:00.000Z`;
+      if (new Date(start).getTime() > nowMs) {
+        const booked = bookedStmt.get(productNo, storeId, start, start) as { n: number };
+        if (booked.n < Math.max(0, Number(product.capacity))) slots.push(hhmm);
+      }
+      minute += durationMinutes;
+    }
+  }
+  return { slots: [...new Set(slots)].sort() };
 }

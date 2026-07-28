@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Health, Settings, Store } from "../api";
 import { languageName, useI18n } from "../components/I18n";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
+import { RichTextEditor } from "../components/RichTextEditor";
 
 type Tab = "store" | "access" | "policies" | "integrations" | "webhooks" | "health";
 
@@ -18,6 +19,9 @@ const EMPTY = {
   pickupEarliestTime: "", returnByTime: "", rentalIncrementUnit: "day", rentalIncrementValue: "1",
   extensionsEnabled: "", extensionApproval: "manual",
   noShowFeeMode: "off", noShowFeeValue: "0",
+  termsRentalEnabled: "", termsCourseEnabled: "", termsServiceEnabled: "",
+  termsRentalHtml: "", termsCourseHtml: "", termsServiceHtml: "",
+  termsRentalPdf: "", termsCoursePdf: "", termsServicePdf: "",
   sftpHost: "", sftpPort: "22", sftpUser: "", sftpPassword: "", sftpPath: "/reservly-ids",
   zoomClientSecret: "", navPassword: "", shopifyApiSecret: "", adminPassword: "",
 };
@@ -67,6 +71,12 @@ export function SettingsPage() {
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [storeActionId, setStoreActionId] = useState<string | null>(null);
   const [confirmStoreDeleteId, setConfirmStoreDeleteId] = useState<string | null>(null);
+  const termsInputs = {
+    rental: useRef<HTMLInputElement>(null),
+    course: useRef<HTMLInputElement>(null),
+    service: useRef<HTMLInputElement>(null),
+  };
+  const [termsBusy, setTermsBusy] = useState<string | null>(null);
 
   type Hook = { id: string; url: string; events: string[]; active: boolean; lastStatus: string; hasSecret: boolean };
   const [hooks, setHooks] = useState<Hook[]>([]);
@@ -168,7 +178,19 @@ export function SettingsPage() {
     setLoading(true);
     setError(null);
     api<{ settings: Partial<Settings> }>("/api/settings")
-      .then(({ settings: loaded }) => setSettings(generalSettings(loaded)))
+      .then(async ({ settings: loaded }) => {
+        const next = generalSettings(loaded);
+        const types = ["rental", "course", "service"] as const;
+        const pdfStates = await Promise.all(types.map(async (type) => {
+          const response = await fetch(`/api/terms/${type}`, { method: "HEAD" }).catch(() => null);
+          return response?.ok && response.headers.get("content-type")?.includes("application/pdf");
+        }));
+        types.forEach((type, index) => {
+          const key = `terms${type[0].toUpperCase()}${type.slice(1)}Pdf` as keyof GeneralSettings;
+          Object.assign(next, { [key]: pdfStates[index] ? "1" : "" });
+        });
+        setSettings(next);
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
     setHealthLoading(true);
@@ -194,7 +216,12 @@ export function SettingsPage() {
       const body: Partial<GeneralSettings> = { ...settings };
       for (const key of WRITE_ONLY) if (!body[key]) delete body[key];
       const { settings: updated } = await api<{ settings: Partial<Settings> }>("/api/settings", { method: "PUT", body });
-      setSettings(generalSettings(updated));
+      const currentPdf = {
+        termsRentalPdf: settings.termsRentalPdf,
+        termsCoursePdf: settings.termsCoursePdf,
+        termsServicePdf: settings.termsServicePdf,
+      };
+      setSettings({ ...generalSettings(updated), ...currentPdf });
       toast.success("Settings saved");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Save failed");
@@ -243,6 +270,50 @@ export function SettingsPage() {
       await api(`/api/webhooks/${id}/test`, { method: "POST" });
       toast.success("Test event sent — refresh to see delivery status");
     } catch (e) { toast.error(e instanceof Error ? e.message : "Test failed"); }
+  };
+
+  const uploadTermsPdf = async (type: "rental" | "course" | "service", file?: File) => {
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      toast.error("Choose a PDF file");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("PDF must be 10 MB or smaller");
+      return;
+    }
+    setTermsBusy(type);
+    try {
+      const response = await fetch(`/api/terms/${type}/pdf`, {
+        method: "POST", headers: { "Content-Type": "application/pdf" }, body: file,
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error || response.statusText);
+      }
+      const pdfKey = `terms${type[0].toUpperCase()}${type.slice(1)}Pdf` as keyof GeneralSettings;
+      set(pdfKey, "1");
+      toast.success(t("PDF uploaded"));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PDF upload failed");
+    } finally {
+      setTermsBusy(null);
+      if (termsInputs[type].current) termsInputs[type].current.value = "";
+    }
+  };
+
+  const removeTermsPdf = async (type: "rental" | "course" | "service") => {
+    setTermsBusy(type);
+    try {
+      await api(`/api/terms/${type}/pdf`, { method: "DELETE" });
+      const pdfKey = `terms${type[0].toUpperCase()}${type.slice(1)}Pdf` as keyof GeneralSettings;
+      set(pdfKey, "");
+      toast.success(t("PDF removed"));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not remove PDF");
+    } finally {
+      setTermsBusy(null);
+    }
   };
 
   const fields = (children: React.ReactNode, rows = 6) => loading
@@ -482,6 +553,53 @@ export function SettingsPage() {
               </div>
             </Field>
           </>, 3)}
+        </div>
+        <div className="card">
+          <h2 className="card-title">{t("Terms & conditions")}</h2>
+          {fields(<>
+            {([
+              { type: "rental", label: "Rentals", enabled: "termsRentalEnabled", html: "termsRentalHtml", pdf: "termsRentalPdf" },
+              { type: "course", label: "Courses", enabled: "termsCourseEnabled", html: "termsCourseHtml", pdf: "termsCoursePdf" },
+              { type: "service", label: "Services", enabled: "termsServiceEnabled", html: "termsServiceHtml", pdf: "termsServicePdf" },
+            ] as const).map((section) => (
+              <div className="translation-panel" key={section.type}>
+                <h3 className="card-title">{t(section.label)}</h3>
+                <label className="checkbox-row" style={{ marginBottom: 12 }}>
+                  <input type="checkbox" checked={settings[section.enabled] === "1"} onChange={(e) => set(section.enabled, e.target.checked ? "1" : "")} />
+                  {t("Enable")}
+                </label>
+                <RichTextEditor
+                  disabled={settings[section.enabled] !== "1" || Boolean(settings[section.pdf])}
+                  value={settings[section.html]}
+                  onChange={(value) => set(section.html, value)}
+                />
+                <div className="btn-row" style={{ marginTop: 12 }}>
+                  <input
+                    ref={termsInputs[section.type]}
+                    hidden
+                    type="file"
+                    accept="application/pdf"
+                    onChange={(event) => void uploadTermsPdf(section.type, event.target.files?.[0])}
+                  />
+                  {settings[section.pdf] ? (
+                    <>
+                      <strong>{t("PDF uploaded")}</strong>
+                      <a className="btn btn-sm" href={`/api/terms/${section.type}`} target="_blank" rel="noreferrer">{t("View PDF")}</a>
+                      <button type="button" className="btn btn-sm" disabled={termsBusy === section.type} onClick={() => void removeTermsPdf(section.type)}>{t("Remove PDF")}</button>
+                    </>
+                  ) : (
+                    <button type="button" className="btn btn-sm" disabled={termsBusy === section.type} onClick={() => termsInputs[section.type].current?.click()}>
+                      {termsBusy === section.type && <Spinner small />} {t("Upload PDF")}
+                    </button>
+                  )}
+                </div>
+                <div className="faint" style={{ marginTop: 8 }}>{t("PDF replaces the text when uploaded")}</div>
+              </div>
+            ))}
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>
+              {saving && <Spinner small />} {t("Save")}
+            </button>
+          </>, 8)}
         </div>
       </>}
 

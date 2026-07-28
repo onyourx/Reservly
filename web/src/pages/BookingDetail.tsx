@@ -502,6 +502,31 @@ export function BookingDetail() {
         </div>
       </div>
 
+      {(b.intakeResponses && Object.keys(b.intakeResponses).length > 0) && (
+        <div className="card" style={{ marginBottom: 18 }}>
+          <h2 className="card-title">{t("Booking form answers")}</h2>
+          <div className="detail-meta">
+            {(Array.isArray(b.intakeResponses)
+              ? b.intakeResponses.map((response) => {
+                  const item = response as unknown as { fieldId?: string; label?: string; value?: unknown };
+                  return [item.label || item.fieldId || "", item.value] as const;
+                })
+              : Object.entries(b.intakeResponses)
+            ).map(([label, value]) => (
+              <div className="meta-item" key={label}>
+                <span className="meta-label">{label}</span>
+                <span>{typeof value === "boolean" ? (value ? "Yes" : "No") : String(value ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {b.termsAcceptedAt && (
+        <div className="faint" style={{ marginBottom: 18 }}>
+          {t("Terms accepted")} {fmtDateTime(b.termsAcceptedAt)}
+        </div>
+      )}
+
       <div className="btn-row" style={{ marginBottom: 18 }}>
         <a
           className="btn btn-sm"

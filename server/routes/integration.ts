@@ -15,9 +15,9 @@ import { authRequired, isAuthenticated, login, logout, requireOwner, setAdminPas
 import { adminSession } from "../lib/platform.js";
 import { getStaffSession, staffTokenOf } from "../lib/staffSessions.js";
 import { collectCustomerData, redactCustomer, sweepRetention } from "../lib/privacy.js";
-import { createBooking } from "../lib/bookingService.js";
+import { BookingValidationError, createBooking } from "../lib/bookingService.js";
 import { quoteLines } from "../engine/pricing.js";
-import { rentalAvailability, courseSlots } from "../engine/availability.js";
+import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
 import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhotos.js";
 
 export const settingsRouter = Router();
@@ -26,7 +26,7 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-export const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "rentalIncrementUnit", "rentalIncrementValue"];
+export const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml"];
 
 settingsRouter.get("/health", (_req, res) => {
   res.json({
@@ -505,6 +505,35 @@ proxyRouter.get("/sessions", (req, res) => {
   const { productNo, from, days } = req.query as Record<string, string>;
   if (!productNo) return res.status(400).json({ error: "productNo required" });
   res.json({ slots: courseSlots(productNo, from || new Date().toISOString(), Number(days) || 90).filter((s) => s.remaining > 0) });
+});
+
+proxyRouter.get("/service-slots", (req, res) => {
+  try {
+    const { productNo, storeId, date } = req.query as Record<string, string>;
+    if (!productNo || !storeId || !date) return res.status(400).json({ error: "productNo, storeId, date required" });
+    res.json(serviceSlots(productNo, storeId, date));
+  } catch (err) {
+    res.status(400).json({ error: String((err as Error).message ?? err) });
+  }
+});
+
+proxyRouter.post("/bookings", async (req, res) => {
+  try {
+    const booking = await createBooking({
+      customer: req.body?.customer,
+      storeId: req.body?.storeId,
+      channel: "WEB",
+      notes: req.body?.notes,
+      lines: req.body?.lines ?? [],
+      fieldResponses: req.body?.fieldResponses,
+      termsAccepted: req.body?.termsAccepted,
+      holdToken: req.body?.holdToken,
+      addons: req.body?.addons,
+    });
+    res.json({ booking });
+  } catch (err) {
+    res.status(400).json(err instanceof BookingValidationError ? err.payload : { error: String((err as Error).message ?? err) });
+  }
 });
 
 proxyRouter.get("/quote", (req, res) => {
