@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
 import type { Store } from "../api";
@@ -12,6 +12,7 @@ interface StoreCtx {
   storeId: string;
   setStoreId: (id: string) => void;
   storeName: (id: string | null | undefined) => string;
+  refreshStores: () => Promise<void>;
 }
 
 const StoreContext = createContext<StoreCtx | null>(null);
@@ -29,22 +30,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     () => localStorage.getItem(STORAGE_KEY) ?? "",
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    api<{ stores: Store[] }>("/api/stores")
-      .then((data) => {
-        if (!cancelled) setStores(data.stores);
-      })
-      .catch(() => {
-        /* topbar will simply show no stores; pages surface their own errors */
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+  const refreshStores = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api<{ stores: Store[] }>("/api/stores");
+        setStores(data.stores);
+        const persistedStoreId = localStorage.getItem(STORAGE_KEY) ?? "";
+        const persistedIsValid = data.stores.some((store) => store.id === persistedStoreId);
+        if (!persistedIsValid && data.stores.length === 1) {
+          const onlyStoreId = data.stores[0].id;
+          setStoreIdState(onlyStoreId);
+          localStorage.setItem(STORAGE_KEY, onlyStoreId);
+        } else if (!persistedIsValid && persistedStoreId) {
+          setStoreIdState("");
+          localStorage.removeItem(STORAGE_KEY);
+        }
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshStores().catch(() => {
+      /* topbar will simply show no stores; pages surface their own errors */
+    });
+  }, [refreshStores]);
 
   const setStoreId = (id: string) => {
     setStoreIdState(id);
@@ -59,7 +69,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <StoreContext.Provider value={{ stores, loading, storeId, setStoreId, storeName }}>
+    <StoreContext.Provider value={{ stores, loading, storeId, setStoreId, storeName, refreshStores }}>
       {children}
     </StoreContext.Provider>
   );

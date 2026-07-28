@@ -22,6 +22,8 @@ function clientId(): string {
 }
 
 let tokenCache: { token: string; shop: string; expiresAt: number } | null = null;
+const customerEmailCache = new Map<string, { email: string; expiresAt: number }>();
+const CUSTOMER_EMAIL_CACHE_TTL_MS = 10 * 60 * 1000;
 
 async function getToken(): Promise<{ shop: string; token: string }> {
   const s = getSettings();
@@ -64,6 +66,37 @@ export async function shopifyGql<T = any>(query: string, variables: Record<strin
   return body.data as T;
 }
 
+/** Resolve a Shopify customer ID to an email without allowing Admin API
+ * configuration or availability issues to break storefront requests. */
+export async function getShopifyCustomerEmail(customerId: string): Promise<string | null> {
+  const id = String(customerId ?? "").trim();
+  if (!id) return null;
+
+  const cached = customerEmailCache.get(id);
+  if (cached && cached.expiresAt > Date.now()) return cached.email;
+  if (cached) customerEmailCache.delete(id);
+
+  try {
+    const data = await shopifyGql<{ customer: { email: string | null } | null }>(
+      `query($id: ID!) {
+        customer(id: $id) { email }
+      }`,
+      { id: `gid://shopify/Customer/${id}` },
+    );
+    const email = data.customer?.email?.trim();
+    if (!email) return null;
+
+    const now = Date.now();
+    for (const [key, entry] of customerEmailCache) {
+      if (entry.expiresAt <= now) customerEmailCache.delete(key);
+    }
+    customerEmailCache.set(id, { email, expiresAt: now + CUSTOMER_EMAIL_CACHE_TTL_MS });
+    return email;
+  } catch {
+    return null;
+  }
+}
+
 /** Create the product metafield definitions the booking widget reads
  *  (booking.type / booking.product_no). Idempotent: 'taken' errors are fine. */
 export async function ensureMetafieldDefinitions(): Promise<string[]> {
@@ -88,6 +121,112 @@ export async function ensureMetafieldDefinitions(): Promise<string[]> {
     else if (errs.length) throw new Error(`metafield definition ${def.key}: ${errs.map((e) => e.message).join("; ")}`);
   }
   return results;
+}
+
+export async function findShopifyCustomer(email: string): Promise<{ id: string; email: string; firstName: string; lastName: string; phone: string } | null> {
+  const data = await shopifyGql<{ customers: { nodes: { id: string; email: string; firstName: string; lastName: string; phone: string }[] } }>(
+    `query($q: String!) {
+      customers(first: 1, query: $q) {
+        nodes { id email firstName lastName phone }
+      }
+    }`,
+    { q: `email:"${email}"` },
+  );
+  return data.customers.nodes[0] ?? null;
+}
+
+export async function ensureShopifyCustomer(c: { email: string; firstName?: string; lastName?: string; phone?: string }): Promise<string | null> {
+  const existing = await findShopifyCustomer(c.email);
+  if (existing) return existing.id;
+
+  const input: { email: string; firstName?: string; lastName?: string; phone?: string } = { email: c.email };
+  if (c.firstName?.trim()) input.firstName = c.firstName;
+  if (c.lastName?.trim()) input.lastName = c.lastName;
+  if (c.phone?.trim()) input.phone = c.phone;
+
+  const data = await shopifyGql<{ customerCreate: { customer: { id: string } | null; userErrors: { message: string }[] } }>(
+    `mutation($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer { id }
+        userErrors { message }
+      }
+    }`,
+    { input },
+  );
+  const errs = data.customerCreate.userErrors ?? [];
+  if (errs.length) throw new Error(`customerCreate: ${errs.map((e) => e.message).join("; ")}`);
+  if (!data.customerCreate.customer?.id) throw new Error("customerCreate: no customer returned");
+  return data.customerCreate.customer.id;
+}
+
+export async function createDraftInvoice(params: {
+  customerId?: string;
+  customerEmail: string;
+  customerFirstName?: string;
+  customerLastName?: string;
+  customerPhone?: string;
+  title: string;
+  price: number;
+  customAttributes: Array<{ key: string; value: string }>;
+}): Promise<{ draftOrderId: string; invoiceUrl: string } | null> {
+  try {
+    const customerId = params.customerId || await ensureShopifyCustomer({
+      email: params.customerEmail,
+      firstName: params.customerFirstName,
+      lastName: params.customerLastName,
+      phone: params.customerPhone,
+    });
+    if (!customerId) throw new Error("Shopify customer could not be resolved");
+
+    const created = await shopifyGql<{
+      draftOrderCreate: {
+        draftOrder: { id: string; invoiceUrl: string } | null;
+        userErrors: { message: string }[];
+      };
+    }>(
+      `mutation($input: DraftOrderInput!) {
+        draftOrderCreate(input: $input) {
+          draftOrder { id invoiceUrl }
+          userErrors { message }
+        }
+      }`,
+      { input: {
+        customerId,
+        lineItems: [{ title: params.title, quantity: 1, price: String(params.price) }],
+        customAttributes: params.customAttributes,
+      } },
+    );
+    const createErrors = created.draftOrderCreate.userErrors ?? [];
+    if (createErrors.length) throw new Error(`draftOrderCreate: ${createErrors.map((error) => error.message).join("; ")}`);
+    const draftOrderId = created.draftOrderCreate.draftOrder?.id;
+    if (!draftOrderId) throw new Error("draftOrderCreate returned no draft order");
+
+    const sent = await shopifyGql<{
+      draftOrderInvoiceSend: {
+        draftOrder: { invoiceUrl: string } | null;
+        userErrors: { message: string }[];
+      };
+    }>(
+      `mutation($draftOrderId: ID!) {
+        draftOrderInvoiceSend(draftOrderId: $draftOrderId) {
+          draftOrder { invoiceUrl }
+          userErrors { message }
+        }
+      }`,
+      { draftOrderId },
+    );
+    const sendErrors = sent.draftOrderInvoiceSend.userErrors ?? [];
+    if (sendErrors.length) throw new Error(`draftOrderInvoiceSend: ${sendErrors.map((error) => error.message).join("; ")}`);
+    return {
+      draftOrderId,
+      invoiceUrl: sent.draftOrderInvoiceSend.draftOrder?.invoiceUrl
+        || created.draftOrderCreate.draftOrder?.invoiceUrl
+        || "",
+    };
+  } catch (err) {
+    console.error("[shopify] createDraftInvoice failed:", err);
+    return null;
+  }
 }
 
 /** Sales-channel publications, cached per process (they rarely change). */

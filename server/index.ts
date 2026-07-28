@@ -11,9 +11,16 @@ import { bookingRouter } from "./routes/booking.js";
 import { settingsRouter, shopifyRouter, proxyRouter } from "./routes/integration.js";
 import { printRouter } from "./routes/print.js";
 import { signRouter } from "./routes/sign.js";
+import { manageRouter } from "./routes/manage.js";
+import { discoverRouter } from "./routes/discover.js";
+import { usersRouter } from "./routes/users.js";
+import { startNotificationSchedule } from "./lib/notifications.js";
+import { consumePrintToken } from "./lib/printing.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+try { process.loadEnvFile(path.join(__dirname, "..", ".env")); } catch { /* no .env — mailer stays unconfigured */ }
 const PORT = Number(process.env.PORT || 4646);
+const HOST = process.env.HOST || "0.0.0.0";
 
 seedPlatform();
 seedIfEmpty();
@@ -35,16 +42,24 @@ app.use("/api/admin", adminRouter);
 // Shopify surfaces (/webhooks, /proxy) authenticate by signature instead.
 const OPEN_API = new Set(["/health", "/auth", "/login", "/logout"]);
 app.use("/api", (req, res, next) => (OPEN_API.has(req.path) ? next() : requireAuth(req, res, next)));
-app.use("/print", requireAuth);
+app.use("/print", (req, res, next) => {
+  const token = req.query.ptoken;
+  if (typeof token === "string" && ["::1", "127.0.0.1", "::ffff:127.0.0.1"].includes(req.ip ?? "") && consumePrintToken(token)) return next();
+  return requireAuth(req, res, next);
+});
 
 app.use("/api", settingsRouter);
 app.use("/api", catalogRouter);
+app.use("/api", usersRouter);
 app.use("/api", bookingRouter);
 app.use("/proxy", proxyRouter); // Shopify App Proxy target (storefront widget)
 app.use("/print", printRouter);
 app.use("/sign", signRouter);   // public: customer e-signature (token-authenticated)
+app.use("/manage", manageRouter); // public: customer cancel/reschedule (token-authenticated)
+app.use("/discover", discoverRouter); // public: cross-product availability search
 
 startRetentionSchedule();
+startNotificationSchedule();
 
 // Production: serve the built SPAs — staff mobile app at /m, admin everywhere else.
 const dist = path.join(__dirname, "..", "web", "dist");
@@ -56,12 +71,12 @@ app.get(/^\/m(\/.*)?$/, (_req, res) => {
   });
 });
 app.use(express.static(dist));
-app.get(/^\/(?!api|proxy|print|sign|webhooks|m\b).*/, (_req, res) => {
+app.get(/^\/(?!api|proxy|print|sign|manage|discover|webhooks|m\b).*/, (_req, res) => {
   res.sendFile(path.join(dist, "index.html"), (err) => {
     if (err) res.status(200).send("Booking Desk API is running. In dev, the admin UI is on http://localhost:5646.");
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`[booking] Gosselin Booking Desk API on http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`[booking] Gosselin Booking Desk API listening on http://${HOST}:${PORT}`);
 });

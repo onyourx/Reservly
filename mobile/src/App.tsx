@@ -42,7 +42,10 @@ function useStandby(): [boolean, () => void] {
   return [standby, () => setStandby(false)];
 }
 
-type View = { name: "list" } | { name: "detail"; id: string };
+type View =
+  | { name: "list" }
+  | { name: "detail"; id: string }
+  | { name: "printers" };
 
 export function App() {
   const [standby, wake] = useStandby();
@@ -78,14 +81,22 @@ export function App() {
   }
   if (authed === null) return <div className="center faint">…</div>;
   if (!authed) return <Login onSuccess={() => setAuthed(true)} />;
-  return view.name === "list" ? (
-    <BookingsList onOpen={(id) => setView({ name: "detail", id })} />
-  ) : (
-    <BookingDetail id={view.id} onBack={() => setView({ name: "list" })} />
-  );
+  if (view.name === "list") {
+    return (
+      <BookingsList
+        onOpen={(id) => setView({ name: "detail", id })}
+        onPrinters={() => setView({ name: "printers" })}
+      />
+    );
+  }
+  if (view.name === "printers") {
+    return <PrintersScreen onBack={() => setView({ name: "list" })} />;
+  }
+  return <BookingDetail id={view.id} onBack={() => setView({ name: "list" })} />;
 }
 
 function Login({ onSuccess }: { onSuccess: () => void }) {
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,7 +105,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
     setBusy(true);
     setError("");
     try {
-      await api("/api/login", { body: { password } });
+      await api("/api/login", { body: { username, password } });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed");
@@ -107,11 +118,17 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
       <LogoMark size={64} />
       <h1>Reservly Staff</h1>
       <input
+        type="text"
+        placeholder="Email"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        autoFocus
+      />
+      <input
         type="password"
-        placeholder="Staff password"
+        placeholder="Password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        autoFocus
       />
       {error && <div className="error">{error}</div>}
       <button type="submit" disabled={busy || !password}>
@@ -123,7 +140,65 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
 
 const STATUS_FILTERS = ["ALL", "RESERVED", "PAID", "PICKED_UP"] as const;
 
-function BookingsList({ onOpen }: { onOpen: (id: string) => void }) {
+function PrintersScreen({ onBack }: { onBack: () => void }) {
+  const [printers, setPrinters] = useState<{ id: string; name: string }[]>([]);
+  const [selected, setSelected] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api<{ printers: { id: string; name: string }[]; defaultPrinter: string | null }>("/api/printers")
+      .then((data) => {
+        setPrinters(data.printers);
+        const stored = localStorage.getItem("reservly.printer");
+        setSelected(stored || data.defaultPrinter || "");
+      })
+      .catch((e: unknown) => {
+        if (!(e instanceof Error) || e.message !== "403") {
+          setError(e instanceof Error ? e.message : "Failed to load printers");
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSelect = (printerId: string) => {
+    setSelected(printerId);
+    localStorage.setItem("reservly.printer", printerId);
+  };
+
+  return (
+    <div className="screen">
+      <header>
+        <button type="button" className="ghost" onClick={onBack}>‹ Back</button>
+        <span>Printers</span>
+      </header>
+      {error && <div className="error">{error}</div>}
+      {loading && <div className="center faint">Loading…</div>}
+      {!loading && printers.length === 0 && !error && (
+        <div className="center faint">
+          No printers found on the server — add the printer to the Mac&apos;s Printers &amp; Scanners first.
+        </div>
+      )}
+      {printers.map((printer) => (
+        <label
+          key={printer.id}
+          className="check"
+          style={{ padding: "14px", background: "#fff", borderRadius: "12px", marginBottom: "8px", border: "1px solid #e5e7ee" }}
+        >
+          <input
+            type="radio"
+            name="printer"
+            checked={selected === printer.id}
+            onChange={() => handleSelect(printer.id)}
+          />
+          <span>{printer.name}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function BookingsList({ onOpen, onPrinters }: { onOpen: (id: string) => void; onPrinters?: () => void }) {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<(typeof STATUS_FILTERS)[number]>("ALL");
@@ -149,7 +224,10 @@ function BookingsList({ onOpen }: { onOpen: (id: string) => void }) {
     <div className="screen">
       <header>
         <span className="brand">Reservly</span>
-        <button type="button" className="ghost" onClick={load}>⟳</button>
+        <div>
+          <button type="button" className="ghost" onClick={load}>⟳</button>
+          <button type="button" className="ghost" onClick={onPrinters} style={{ fontSize: "18px" }}>⚙</button>
+        </div>
       </header>
       <input className="search" type="search" placeholder="Search ref, customer…" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="chips">
@@ -175,10 +253,80 @@ function BookingsList({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
+function PrintSection({ bookingId }: { bookingId: string }) {
+  const [printState, setPrintState] = useState<"idle" | "pending" | "success" | "error">("idle");
+  const [jobId, setJobId] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const selectedPrinter = localStorage.getItem("reservly.printer");
+
+  const doPrint = async (doc: "contract" | "packing-list") => {
+    if (!selectedPrinter) return;
+    setPrintState("pending");
+    setErrorMsg("");
+    try {
+      const response = await api<{ ok: boolean; jobId: string }>("/api/print", {
+        body: { doc, id: bookingId, printer: selectedPrinter },
+      });
+      setJobId(response.jobId);
+      setPrintState("success");
+      window.setTimeout(() => setPrintState("idle"), 3000);
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Print failed");
+      setPrintState("error");
+    }
+  };
+
+  const preview = (doc: "contract" | "packing-list") => {
+    window.open(`/print/${doc}/${bookingId}`, "_blank");
+  };
+
+  return (
+    <div className="card">
+      <div style={{ marginBottom: "12px", fontWeight: "600" }}>Print</div>
+      {!selectedPrinter && (
+        <div className="faint" style={{ marginBottom: "12px" }}>Choose a printer first in Settings</div>
+      )}
+      {printState === "success" && (
+        <div style={{ color: "#157347", fontSize: "14px", marginBottom: "12px" }}>
+          Sent to printer (job {jobId})
+        </div>
+      )}
+      {printState === "error" && <div className="error">{errorMsg}</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {(["contract", "packing-list"] as const).map((doc) => (
+          <div key={doc} style={{ display: "flex", gap: "8px" }}>
+            <button
+              type="button"
+              className="primary"
+              disabled={!selectedPrinter || printState === "pending"}
+              onClick={() => void doPrint(doc)}
+              style={{ flex: 1 }}
+            >
+              {printState === "pending" ? "Printing…" : `Print ${doc === "contract" ? "contract" : "packing list"}`}
+            </button>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => preview(doc)}
+              style={{ padding: "15px 12px" }}
+            >
+              Preview
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BookingDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [b, setB] = useState<Booking | null>(null);
   const [error, setError] = useState("");
   const [signBusy, setSignBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [sftpConfigured, setSftpConfigured] = useState(false);
+  const [canManageUsers, setCanManageUsers] = useState(false);
+  const photoFileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
     api<{ booking: Booking }>(`/api/bookings/${id}`)
@@ -186,6 +334,14 @@ function BookingDetail({ id, onBack }: { id: string; onBack: () => void }) {
       .catch((e: Error) => setError(e.message));
   }, [id]);
   useEffect(load, [load]);
+  useEffect(() => {
+    api<{ sftpConfigured: boolean }>("/api/health")
+      .then((health) => setSftpConfigured(health.sftpConfigured))
+      .catch(() => setSftpConfigured(false));
+    api<{ access?: { canManageUsers?: boolean } | null }>("/api/auth")
+      .then((auth) => setCanManageUsers(Boolean(auth.access?.canManageUsers)))
+      .catch(() => setCanManageUsers(false));
+  }, []);
 
   const toggle = async (lineId: string, itemNo: string) => {
     if (!b) return;
@@ -203,7 +359,8 @@ function BookingDetail({ id, onBack }: { id: string; onBack: () => void }) {
     try {
       const d = await api<{ url: string }>(`/api/bookings/${id}/request-signature`, { method: "POST" });
       const url = new URL(d.url);
-      window.location.href = `${url.pathname}?return=${encodeURIComponent(`/m/`)}`;
+      url.searchParams.set("return", "/m/");
+      window.location.href = `${url.pathname}${url.search}`;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start signing");
       setSignBusy(false);
@@ -225,6 +382,64 @@ function BookingDetail({ id, onBack }: { id: string; onBack: () => void }) {
         <strong>{`${b.customer.firstName} ${b.customer.lastName}`.trim() || b.customer.email}</strong>
         <div className="faint">{b.customer.email}{b.customer.phone ? ` · ${b.customer.phone}` : ""}{b.customer.b2b ? " · B2B" : ""}</div>
         <div className="faint">Total {money(b.subtotal)}{b.deposit ? ` · deposit ${money(b.deposit)}` : ""}</div>
+      </div>
+      <div className="card">
+        <strong>ID photo</strong>
+        {b.idPhotoAt ? (
+          <div>
+            <div className="faint">Captured {fmtDT(b.idPhotoAt)}</div>
+            <div className="actions">
+              <button type="button" className="ghost" onClick={() => window.open(`/api/bookings/${b.id}/id-photo`, "_blank")}>View</button>
+              {canManageUsers && (
+                <button type="button" className="ghost" onClick={() => {
+                  if (!confirm("Remove ID photo?")) return;
+                  setPhotoBusy(true);
+                  api(`/api/bookings/${b.id}/id-photo`, { method: "DELETE" })
+                    .then(() => load())
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => setPhotoBusy(false));
+                }} disabled={photoBusy}>Remove</button>
+              )}
+            </div>
+          </div>
+        ) : sftpConfigured ? (
+          <>
+            <input
+              ref={photoFileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(event) => {
+                const input = event.currentTarget;
+                const file = input.files?.[0];
+                if (!file) return;
+                setPhotoBusy(true);
+                file.arrayBuffer()
+                  .then((buffer) => fetch(`/api/bookings/${b.id}/id-photo`, {
+                    method: "POST",
+                    body: buffer,
+                    headers: { "content-type": file.type || "image/jpeg" },
+                  }))
+                  .then(async (response) => {
+                    const result = await response.json() as { ok?: boolean; error?: string };
+                    if (!response.ok || !result.ok) throw new Error(result.error || "Upload failed");
+                    load();
+                  })
+                  .catch((e: Error) => setError(e.message))
+                  .finally(() => {
+                    setPhotoBusy(false);
+                    input.value = "";
+                  });
+              }}
+            />
+            <button type="button" className="primary" onClick={() => photoFileRef.current?.click()} disabled={photoBusy}>
+              {photoBusy ? "Uploading…" : "Capture ID photo"}
+            </button>
+          </>
+        ) : (
+          <div className="faint">SFTP not configured</div>
+        )}
       </div>
 
       {b.lines.map((l) => (
@@ -259,6 +474,7 @@ function BookingDetail({ id, onBack }: { id: string; onBack: () => void }) {
           )}
         </div>
       )}
+      {rentals.length > 0 && <PrintSection bookingId={id} />}
     </div>
   );
 }

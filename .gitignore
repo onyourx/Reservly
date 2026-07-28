@@ -11,3 +11,4 @@ platform.db
 platform.db-shm
 platform.db-wal
 web/dist/
+mobile/dist/

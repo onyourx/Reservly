@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, qs } from "../api";
 import type {
   Booking,
   CourseSlot,
+  CrossSellSuggestion,
   Customer,
   Product,
   Quote,
@@ -14,6 +15,8 @@ import { fmtDate, fmtDateTime, localToISO, money, todayISO } from "../format";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { Field, Spinner } from "../components/ui";
+import { RentalAvailabilityCalendar } from "../components/RentalAvailabilityCalendar";
+import { useI18n } from "../components/I18n";
 
 interface BasketLine {
   key: number;
@@ -40,6 +43,13 @@ function RentalBuilder({
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [qty, setQty] = useState(1);
+  const [rentalRules, setRentalRules] = useState({
+    pickupEarliestTime: "",
+    returnByTime: "",
+    rentalIncrementUnit: "day",
+    rentalIncrementValue: "",
+  });
+  const { t } = useI18n();
 
   const [quote, setQuote] = useState<Quote | null>(null);
   const [avail, setAvail] = useState<RentalAvailability | null>(null);
@@ -50,6 +60,12 @@ function RentalBuilder({
     api<{ products: Product[] }>("/api/products?type=RENTAL")
       .then((d) => setProducts(d.products))
       .catch(() => setProducts([]));
+  }, []);
+
+  useEffect(() => {
+    api<{ settings: typeof rentalRules }>("/api/settings")
+      .then(({ settings }) => setRentalRules((current) => ({ ...current, ...settings })))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -107,9 +123,36 @@ function RentalBuilder({
     setQty(1);
   };
 
+  const applyCalendarRange = (fromDate: string, toDate: string) => {
+    const timeFor = (value: string, fallback: string) => {
+      const time = value.includes("T") ? value.split("T")[1] : "";
+      return time || fallback;
+    };
+    setFrom(`${fromDate}T${timeFor(from, rentalRules.pickupEarliestTime || "09:00")}`);
+    setTo(`${toDate}T${timeFor(to, rentalRules.returnByTime || "17:00")}`);
+  };
+
+  const increment = Number(rentalRules.rentalIncrementValue);
+  const incrementHint = Number.isInteger(increment) && increment > 0
+    ? `${t("Rentals are booked in blocks of")} ${increment} ${t(
+        rentalRules.rentalIncrementUnit === "hour"
+          ? (increment === 1 ? "Hour" : "Hours")
+          : (increment === 1 ? "Day" : "Days"),
+      ).toLowerCase()}`
+    : "";
+
   return (
     <div className="card">
       <h2 className="card-title">Add rental line</h2>
+      {(rentalRules.pickupEarliestTime || rentalRules.returnByTime || incrementHint) && (
+        <div className="faint" style={{ marginBottom: 12 }}>
+          {[
+            rentalRules.pickupEarliestTime ? `${t("Earliest pickup time")}: ${rentalRules.pickupEarliestTime}` : "",
+            rentalRules.returnByTime ? `${t("Return by")}: ${rentalRules.returnByTime}` : "",
+            incrementHint,
+          ].filter(Boolean).join(" · ")}
+        </div>
+      )}
       <div className="form-grid-3">
         <Field label="Equipment">
           <select value={productNo} onChange={(e) => setProductNo(e.target.value)}>
@@ -146,6 +189,17 @@ function RentalBuilder({
           <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
         </Field>
       </div>
+
+      {productNo && storeId && (
+        <RentalAvailabilityCalendar
+          productNo={productNo}
+          storeId={storeId}
+          selectable
+          rangeFrom={from ? from.slice(0, 10) : undefined}
+          rangeTo={to ? to.slice(0, 10) : undefined}
+          onRange={applyCalendarRange}
+        />
+      )}
 
       {checkError && <div className="quote-preview avail-no">{checkError}</div>}
 
@@ -334,6 +388,7 @@ function CourseBuilder({ onAdd }: { onAdd: (line: BasketLine) => void }) {
 /* ---------------- Page ---------------- */
 
 export function BookingNew() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const toast = useToast();
   const { stores, storeId: globalStoreId } = useStores();
@@ -348,9 +403,12 @@ export function BookingNew() {
   const [bookingStoreId, setBookingStoreId] = useState(globalStoreId);
   const [notes, setNotes] = useState("");
   const [basket, setBasket] = useState<BasketLine[]>([]);
+  const [crossSellSuggestions, setCrossSellSuggestions] = useState<CrossSellSuggestion[]>([]);
   const [totals, setTotals] = useState<Quote | null>(null);
   const [totalsBusy, setTotalsBusy] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [customerLookup, setCustomerLookup] = useState<"loading" | "shopify" | "local" | "new" | null>(null);
+  const customerLookupSequence = useRef(0);
 
   useEffect(() => {
     if (globalStoreId && !bookingStoreId) setBookingStoreId(globalStoreId);
@@ -359,6 +417,26 @@ export function BookingNew() {
 
   // Re-quote the whole basket whenever it changes.
   const basketKey = useMemo(() => JSON.stringify(basket.map((b) => b.ql)), [basket]);
+  const basketProductNos = useMemo(
+    () => [...new Set(basket.map((line) => line.ql.type === "RENTAL" ? line.ql.productNo : "").filter(Boolean))].sort(),
+    [basketKey],
+  );
+  const basketProductNosKey = basketProductNos.join(",");
+  useEffect(() => {
+    if (!basketProductNosKey) {
+      setCrossSellSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    api<{ suggestions: CrossSellSuggestion[] }>(
+      `/api/cross-sell${qs({ productNos: basketProductNosKey })}`,
+    ).then(({ suggestions }) => {
+      if (!cancelled) setCrossSellSuggestions(suggestions);
+    }).catch(() => {
+      if (!cancelled) setCrossSellSuggestions([]);
+    });
+    return () => { cancelled = true; };
+  }, [basketProductNosKey]);
   useEffect(() => {
     if (basket.length === 0) {
       setTotals(null);
@@ -387,6 +465,64 @@ export function BookingNew() {
     customer.firstName.trim() !== "" &&
     customer.lastName.trim() !== "";
   const canCreate = customerOk && bookingStoreId !== "" && basket.length > 0 && !creating;
+
+  const handleQuickAddCrossSell = (suggestion: CrossSellSuggestion) => {
+    if (suggestion.type === "RENTAL") {
+      setBasket((current) => [...current, {
+        key: nextKey++,
+        ql: { type: "RENTAL", productNo: suggestion.productNo, storeId: bookingStoreId, from: "", to: "", qty: 1 },
+        label: suggestion.name,
+        sub: `${stores.find((store) => store.id === bookingStoreId)?.name ?? bookingStoreId} · confirm dates · qty 1`,
+      }]);
+    } else {
+      setBasket((current) => [...current, {
+        key: nextKey++,
+        ql: { type: "COURSE", sessionId: "", qty: 1 },
+        label: suggestion.name,
+        sub: "Confirm session · qty 1",
+      }]);
+    }
+    toast.success(t("Item added to basket — confirm dates"));
+  };
+
+  const lookupCustomer = async () => {
+    const email = customer.email.trim();
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
+      setCustomerLookup(null);
+      return;
+    }
+    const sequence = ++customerLookupSequence.current;
+    setCustomerLookup("loading");
+    try {
+      const result = await api<{
+        found: boolean;
+        source?: "shopify" | "local";
+        customer?: { email: string; firstName: string; lastName: string; phone: string };
+      }>(`/api/customers/lookup${qs({ email })}`);
+      if (sequence !== customerLookupSequence.current) return;
+      if (!result.found || !result.customer) {
+        setCustomerLookup("new");
+        return;
+      }
+      setCustomer((current) => ({
+        ...current,
+        firstName: current.firstName || result.customer?.firstName || "",
+        lastName: current.lastName || result.customer?.lastName || "",
+        phone: current.phone || result.customer?.phone || "",
+      }));
+      setCustomerLookup(result.source === "shopify" ? "shopify" : "local");
+    } catch {
+      if (sequence === customerLookupSequence.current) setCustomerLookup(null);
+    }
+  };
+
+  const lookupHint = customerLookup === "shopify"
+    ? t("Customer found in Shopify")
+    : customerLookup === "local"
+      ? t("Returning customer")
+      : customerLookup === "new"
+        ? t("New customer — will be added to Shopify with this booking")
+        : null;
 
   const create = async () => {
     if (!canCreate) return;
@@ -427,9 +563,18 @@ export function BookingNew() {
             <input
               type="email"
               value={customer.email}
-              onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
+              onChange={(e) => {
+                customerLookupSequence.current += 1;
+                setCustomer({ ...customer, email: e.target.value });
+                setCustomerLookup(null);
+              }}
+              onBlur={() => void lookupCustomer()}
               placeholder="customer@example.com"
             />
+            {customerLookup === "loading" && (
+              <span className="faint"><Spinner small /> {t("Looking up…")}</span>
+            )}
+            {lookupHint && <span className="faint">{lookupHint}</span>}
           </Field>
           <Field label="Phone">
             <input
@@ -556,6 +701,23 @@ export function BookingNew() {
                   {grandTotal !== null ? money(grandTotal) : "—"}
                 </span>
               </div>
+            </div>
+          </>
+        )}
+
+        {crossSellSuggestions.length > 0 && (
+          <>
+            <hr className="divider" />
+            <div className="field-label">{t("Customers also rent")}</div>
+            <div className="btn-row" style={{ overflowX: "auto", flexWrap: "nowrap", paddingBottom: 4 }}>
+              {crossSellSuggestions.map((suggestion) => (
+                <div className="btn-row" key={suggestion.productNo} style={{ flexWrap: "nowrap" }}>
+                  <span>{suggestion.name} · {money(suggestion.defaultUnitPrice)}</span>
+                  <button type="button" className="btn btn-sm" onClick={() => handleQuickAddCrossSell(suggestion)}>
+                    {t("Add to basket")}
+                  </button>
+                </div>
+              ))}
             </div>
           </>
         )}

@@ -2,11 +2,13 @@
 // the Shopify orders/create webhook (web channel) — one code path for both R4-R5
 // and class steps 6-10.
 import crypto from "node:crypto";
-import { db, uid, now, pj, j } from "../db.js";
+import { db, uid, now, pj, j, getSettings } from "../db.js";
 import { quoteLines, round2, type QuoteLineIn } from "../engine/pricing.js";
 import { confirmReservation } from "./nav.js";
 import { idLast4 } from "./crypto.js";
 import { emit } from "./events.js";
+import { scheduleBookingReminders } from "./notifications.js";
+import { validateRentalWindow } from "./policy.js";
 
 export interface CustomerIn {
   email: string; firstName?: string; lastName?: string; phone?: string; b2b?: boolean;
@@ -25,28 +27,40 @@ export async function createBooking(input: {
   shopifyOrderId?: string;
   shopifyOrderName?: string;
   paid?: boolean;
+  holdToken?: string;
+  intakeResponses?: Record<string, unknown>;
+  addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId?: string }[];
 }) {
   if (!input.customer?.email) throw new Error("customer.email is required");
   if (!input.lines?.length) throw new Error("At least one line is required");
   const quoted = quoteLines(input.lines);
+  for (const line of quoted.lines) {
+    if (line.type !== "RENTAL") continue;
+    const validation = validateRentalWindow(line.from, line.to);
+    if (!validation.ok) throw new Error(validation.error);
+  }
+  const addonTotal = round2((input.addons || []).reduce((sum, a) => sum + (Number(a.unitPrice) || 0) * Math.max(1, Number(a.qty) || 1), 0));
+  const commerceTotal = round2(quoted.subtotal + addonTotal);
 
   const types = new Set(quoted.lines.map((l) => l.type));
   const type = types.size > 1 ? "MIXED" : [...types][0];
   const id = uid();
   const ref = newRef();
   const status = input.paid ? "PAID" : "RESERVED";
+  const manageToken = crypto.randomBytes(24).toString("base64url");
 
   db.prepare(
     `INSERT INTO bookings (id, ref, type, status, channel, store_id, customer_email, customer_first,
        customer_last, customer_phone, customer_b2b, subtotal, deposit, total, currency,
-       shopify_order_id, shopify_order_name, notes, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CAD', ?, ?, ?, ?, ?)`,
+       shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CAD', ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, ref, type, status, input.channel, input.storeId ?? null,
     input.customer.email, input.customer.firstName ?? "", input.customer.lastName ?? "",
     input.customer.phone ?? "", input.customer.b2b ? 1 : 0,
-    quoted.subtotal, quoted.deposit, quoted.subtotal,
-    input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "", now(), now(),
+    commerceTotal, quoted.deposit, commerceTotal,
+    input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "", manageToken,
+    j(input.intakeResponses ?? {}), now(), now(),
   );
 
   for (const line of quoted.lines) {
@@ -87,7 +101,22 @@ export async function createBooking(input: {
     }
   }
 
-  emit(id, "booking.created", { ref, type, channel: input.channel, email: input.customer.email, total: quoted.subtotal });
+  if (input.holdToken) db.prepare("DELETE FROM booking_holds WHERE token=?").run(input.holdToken);
+  if (input.addons?.length) {
+    const insertAddon = db.prepare(`INSERT INTO booking_addons(id,booking_id,addon_product_no,name,qty,unit_price,shopify_variant_id)
+      VALUES(?,?,?,?,?,?,?)`);
+    for (const addon of input.addons) insertAddon.run(uid(), id, addon.productNo, addon.name, Math.max(1, addon.qty || 1),
+      Number(addon.unitPrice) || 0, addon.shopifyVariantId || "");
+  }
+
+  emit(id, "booking.created", { ref, type, channel: input.channel, email: input.customer.email, total: commerceTotal, addonTotal });
+  const publicUrl = (getSettings().publicUrl || process.env.PUBLIC_URL || "").replace(/\/+$/, "");
+  emit(id, "booking.management_link_created", {
+    email: input.customer.email,
+    url: `${publicUrl}/manage/${manageToken}`,
+    calendarUrl: `${publicUrl}/manage/${manageToken}/calendar.ics`,
+  });
+  scheduleBookingReminders(id);
   return serializeBooking(id)!;
 }
 
@@ -116,6 +145,14 @@ export function serializeBooking(id: string) {
       sellingItem: l.selling_item, inspectionOut: l.inspection_out, inspectionIn: l.inspection_in,
       damages: pj(l.damages, [] as any[]),
       checklist,
+      ...(l.session_id ? (() => {
+        const session = db.prepare("SELECT delivery_mode,meeting_url FROM sessions WHERE id=?").get(l.session_id) as any;
+        return { deliveryMode: session?.delivery_mode || "IN_PERSON", meetingUrl: session?.meeting_url || "" };
+      })() : {}),
+      units: (db.prepare(`SELECT u.id, u.barcode, u.serial_no AS serialNo, u.status, u.condition,
+        u.store_id AS storeId, x.assigned_at AS assignedAt, x.returned_at AS returnedAt
+        FROM booking_line_units x JOIN rental_units u ON u.id = x.unit_id
+        WHERE x.booking_line_id = ? ORDER BY u.barcode`).all(l.id) as any[]),
     };
   });
   const events = (db.prepare("SELECT * FROM events WHERE booking_id = ? ORDER BY id DESC LIMIT 50").all(b.id) as any[]).map((e) => ({
@@ -131,9 +168,16 @@ export function serializeBooking(id: string) {
     refundDue: b.refund_due, currency: b.currency, posReceiptNo: b.pos_receipt_no,
     shopifyOrderId: b.shopify_order_id, shopifyOrderName: b.shopify_order_name,
     idOnFile: !!b.id_encrypted, idLast4: b.id_encrypted ? idLast4(b.id_encrypted) : "",
+    idPhotoAt: b.id_photo_at || "",
     contractSignedAt: b.contract_signed_at, signatureName: b.signature_name || "",
     signaturePending: Boolean(b.sign_token) && !b.contract_signed_at,
-    notes: b.notes, createdAt: b.created_at, events,
+    notes: b.notes, createdAt: b.created_at, checkedInAt: b.checked_in_at, noShowAt: b.no_show_at,
+    noShowFee: Number(b.no_show_fee || 0), noShowFeeStatus: b.no_show_fee_status || "",
+    noShowDraftOrderId: b.no_show_draft_order_id || "",
+    intakeResponses: pj(b.intake_responses, {}), rescheduleCount: b.reschedule_count || 0,
+    addons: db.prepare(`SELECT addon_product_no AS productNo,name,qty,unit_price AS unitPrice,
+      shopify_variant_id AS shopifyVariantId FROM booking_addons WHERE booking_id=?`).all(b.id),
+    events,
     navRefs: lines.filter((l) => l.activityNo).map((l) => ({
       lineId: l.id, activityNo: l.activityNo, bookingRef: l.bookingRef, sellingItem: l.sellingItem,
     })),

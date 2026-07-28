@@ -9,6 +9,7 @@
   var productNo = root.dataset.productNo;
   var addBtn = root.querySelector(".gsl-add");
   var form = root.querySelector(".gsl-add-form");
+  var configuredAddons = [];
 
   function get(path, params) {
     var q = new URLSearchParams(params || {});
@@ -20,12 +21,97 @@
       return r.json();
     });
   }
+  function post(path, body) {
+    return fetch(proxy + path, {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) {
+      return r.json().then(function (d) {
+        if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+        return d;
+      });
+    });
+  }
   function showError(msg) {
     var el = document.createElement("div");
     el.className = "gsl-error";
     el.textContent = msg;
     root.insertBefore(el, form);
     addBtn.disabled = true;
+  }
+  function offerWaitlist(details) {
+    if (root.querySelector(".gsl-waitlist")) return;
+    var box = document.createElement("div");
+    box.className = "gsl-waitlist";
+    box.innerHTML = '<strong>Fully booked?</strong><span> Join the waitlist and we’ll let you know when space opens.</span>' +
+      '<button type="button">Join waitlist</button>';
+    box.querySelector("button").onclick = function () {
+      var name = window.prompt("Your name") || "";
+      var email = window.prompt("Email address") || "";
+      if (!email) return;
+      box.querySelector("button").disabled = true;
+      post("/waitlist", Object.assign({ productNo: productNo, name: name, email: email }, details || {}))
+        .then(function () { box.innerHTML = "<strong>✓ You’re on the waitlist.</strong> We’ll contact you when availability opens."; })
+        .catch(function (e) { box.querySelector("button").disabled = false; window.alert(e.message); });
+    };
+    form.parentNode.insertBefore(box, form);
+  }
+  function renderAddons() {
+    get("/addons", { productNo: productNo }).then(function (d) {
+      configuredAddons = (d.addons || []).filter(function (a) { return a.shopifyVariantId; });
+      if (!configuredAddons.length) return;
+      var box = document.createElement("div");
+      box.className = "gsl-addons";
+      box.innerHTML = "<strong>Enhance your booking</strong>";
+      configuredAddons.forEach(function (addon, index) {
+        var row = document.createElement("label");
+        row.className = "gsl-addon";
+        row.innerHTML = '<input type="checkbox" data-addon="' + index + '"' + (addon.required ? " checked disabled" : "") + ">" +
+          '<span>' + addon.name + '<small>+' + money(addon.price) + "</small></span>" +
+          (addon.maxQty > 1 ? '<input type="number" class="gsl-addon-qty" min="1" max="' + addon.maxQty + '" value="1">' : "");
+        box.appendChild(row);
+      });
+      form.parentNode.insertBefore(box, form);
+    }).catch(function () {});
+  }
+  function selectedAddonItems() {
+    return Array.prototype.slice.call(root.querySelectorAll(".gsl-addon")).filter(function (row) {
+      return row.querySelector('input[type="checkbox"]').checked;
+    }).map(function (row) {
+      var addon = configuredAddons[Number(row.querySelector("[data-addon]").dataset.addon)];
+      var qty = row.querySelector(".gsl-addon-qty");
+      return {
+        id: Number(addon.shopifyVariantId), quantity: qty ? Number(qty.value) || 1 : 1,
+        properties: { _booking_addon_for: productNo, _addon_product_no: addon.productNo },
+      };
+    });
+  }
+  function cartProperties() {
+    var result = {};
+    Array.prototype.slice.call(form.querySelectorAll('input[name^="properties["]')).forEach(function (input) {
+      var key = input.name.slice(11, -1);
+      if (input.value) result[key] = input.value;
+    });
+    return result;
+  }
+  function submitCart() {
+    var extras = selectedAddonItems();
+    if (!extras.length) { submitting = true; form.submit(); return; }
+    var main = {
+      id: Number(form.querySelector('input[name="id"]').value),
+      quantity: Number(form.querySelector('input[name="quantity"]').value) || 1,
+      properties: cartProperties(),
+    };
+    fetch(window.Shopify && Shopify.routes ? Shopify.routes.root + "cart/add.js" : "/cart/add.js", {
+      method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ items: [main].concat(extras) }),
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (d) { throw new Error(d.description || "Could not add booking"); });
+      window.location.href = "/cart";
+    }).catch(function (e) {
+      addBtn.disabled = false; addBtn.textContent = "Try again"; showError(e.message);
+    });
   }
   function money(n) {
     return "CA$" + Number(n).toFixed(2);
@@ -174,6 +260,8 @@
           root.querySelector(".gsl-p-to").value = sel.to;
           root.querySelector(".gsl-p-label").value =
             line.days + "-day rental · " + start + " " + timeFrom.value + " → " + end + " " + timeTo.value;
+        } else {
+          offerWaitlist({ storeId: storeSel.value, from: sel.from, to: sel.to, qty: 1 });
         }
       });
     }
@@ -222,6 +310,7 @@
       var slots = d.slots || [];
       if (!slots.length) {
         if (!root.querySelector(".gsl-error")) slotsBox.innerHTML = "<em>No upcoming sessions — check back soon.</em>";
+        offerWaitlist({});
         return;
       }
       slotsBox.innerHTML = "";
@@ -239,6 +328,8 @@
           '<span class="gsl-slot-seats' + (s.remaining <= 2 ? " low" : "") + '">' + s.remaining + " seats left</span>";
         label.querySelector("input").addEventListener("change", function () {
           root.querySelector(".gsl-p-session").value = s.sessionId;
+          root.querySelector(".gsl-p-from").value = s.date + "T" + s.time + ":00";
+          root.querySelector(".gsl-p-to").value = s.endsAt;
           root.querySelector(".gsl-p-label").value = dateStr + " " + s.time + " @ " + s.location;
           addBtn.disabled = false;
           addBtn.textContent = "Add booking to cart";
@@ -247,8 +338,29 @@
       });
     });
   }
+  renderAddons();
 
-  form.addEventListener("submit", function () {
-    addBtn.textContent = "Adding…";
+  var submitting = false;
+  form.addEventListener("submit", function (event) {
+    if (submitting) return;
+    event.preventDefault();
+    addBtn.disabled = true;
+    addBtn.textContent = "Reserving your slot…";
+    post("/holds", {
+      productNo: productNo,
+      sessionId: root.querySelector(".gsl-p-session").value || undefined,
+      storeId: root.querySelector(".gsl-p-store").value || undefined,
+      from: root.querySelector(".gsl-p-from").value,
+      to: root.querySelector(".gsl-p-to").value,
+      qty: Number(root.querySelector(".gsl-qty").value) || 1,
+    }).then(function (hold) {
+      root.querySelector(".gsl-p-hold").value = hold.token;
+      addBtn.textContent = "Adding…";
+      submitCart();
+    }).catch(function (err) {
+      addBtn.disabled = false;
+      addBtn.textContent = "Try again";
+      showError(err.message || "That slot is no longer available.");
+    });
   });
 })();

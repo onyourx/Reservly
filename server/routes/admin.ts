@@ -4,8 +4,10 @@ import { Router } from "express";
 import {
   platformDb, listTenants, getTenant, createTenant, openTenantDb,
   adminLogin, adminLogout, adminChangePassword, adminSession, setAdminTenant, requireSuperadmin,
+  createPasswordReset, consumePasswordReset,
 } from "../lib/platform.js";
-import { now } from "../db.js";
+import { now, auditLog } from "../db.js";
+import { sendMail } from "../lib/mailer.js";
 
 export const adminRouter = Router();
 
@@ -16,6 +18,33 @@ adminRouter.get("/me", (req, res) => {
   const s = adminSession(req);
   if (!s) return res.status(401).json({ error: "auth_required" });
   res.json({ email: s.email, tenant: s.tenantSlug });
+});
+
+adminRouter.post("/forgot-password", async (req, res) => {
+  const email = String(req.body?.username ?? "").trim().toLowerCase();
+  const token = email ? createPasswordReset(email) : null;
+
+  if (token) {
+    const link = `${req.protocol}://${req.get("host")}/reset-password?token=${token}`;
+    const text = `Someone requested a password reset for your Reservly platform account.\n\nReset your password (valid for 30 minutes):\n${link}\n\nIf you didn't request this, ignore this email.`;
+    const html = `<p>Someone requested a password reset for your Reservly platform account.</p>\n<p><a href="${link}">Reset your password</a> (valid for 30 minutes)</p>\n<p>If you didn't request this, ignore this email.</p>`;
+    void sendMail({ to: email, subject: "Reservly — password reset", text, html });
+    auditLog("password.reset_requested", "", req.ip ?? "", email);
+  }
+
+  res.json({ ok: true });
+});
+
+adminRouter.post("/reset-password", (req, res) => {
+  const { token, password } = req.body ?? {};
+  const result = consumePasswordReset(String(token ?? ""), String(password ?? ""));
+
+  if (result.ok) {
+    auditLog("password.reset_completed", "", req.ip ?? "", result.email);
+    res.json({ ok: true });
+  } else {
+    res.status(400).json({ error: result.error });
+  }
 });
 
 adminRouter.use(requireSuperadmin);

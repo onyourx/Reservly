@@ -1,39 +1,237 @@
 import { Router } from "express";
-import { db, uid, now } from "../db.js";
-import { getActivityTypes, getActivityProducts, navMode } from "../lib/nav.js";
+import { db, uid, now, getSettings, pj, auditLog } from "../db.js";
+import { getActivityTypes, getActivityProducts, navMode, pushProductToNav } from "../lib/nav.js";
 import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels } from "../lib/shopifyAdmin.js";
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
+import { createZoomMeeting } from "../lib/zoom.js";
+import { serializeBooking } from "../lib/bookingService.js";
+import { allowedStoreIds, requireOwner, requirePerm } from "../lib/auth.js";
 
 export const catalogRouter = Router();
 
-catalogRouter.get("/stores", (_req, res) => {
-  res.json({ stores: db.prepare("SELECT * FROM stores ORDER BY name").all() });
+catalogRouter.get("/stores", (req, res) => {
+  const allowed = allowedStoreIds(req);
+  if (allowed === "*") {
+    return res.json({ stores: db.prepare("SELECT * FROM stores ORDER BY name").all() });
+  }
+  if (!allowed.length) return res.json({ stores: [] });
+  const placeholders = allowed.map(() => "?").join(",");
+  return res.json({ stores: db.prepare(`SELECT * FROM stores WHERE id IN (${placeholders}) ORDER BY name`).all(...allowed) });
+});
+
+const serializeStore = (store: any) => ({
+  id: store.id,
+  code: store.code,
+  name: store.name,
+  city: store.city ?? "",
+});
+
+catalogRouter.post("/stores", requireOwner, (req, res) => {
+  const code = String(req.body?.code ?? "").trim();
+  const name = String(req.body?.name ?? "").trim();
+  const city = String(req.body?.city ?? "").trim();
+  if (!code) return res.status(400).json({ error: "code_required" });
+  if (!name) return res.status(400).json({ error: "name_required" });
+  if (db.prepare("SELECT id FROM stores WHERE code=?").get(code)) {
+    return res.status(409).json({ error: "code_exists" });
+  }
+  const store = { id: uid(), code, name, city };
+  const timestamp = now();
+  db.prepare("INSERT INTO stores(id,code,name,city,created_at,updated_at) VALUES(?,?,?,?,?,?)")
+    .run(store.id, store.code, store.name, store.city, timestamp, timestamp);
+  auditLog("store.created", code);
+  return res.json({ store });
+});
+
+catalogRouter.put("/stores/:id", requireOwner, (req, res) => {
+  const existing = db.prepare("SELECT * FROM stores WHERE id=?").get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "store_not_found" });
+
+  let code = existing.code as string;
+  let name = existing.name as string;
+  let city = existing.city ?? "";
+  if (req.body?.code !== undefined) {
+    code = String(req.body.code).trim();
+    if (!code) return res.status(400).json({ error: "code_required" });
+    if (db.prepare("SELECT id FROM stores WHERE code=? AND id<>?").get(code, existing.id)) {
+      return res.status(409).json({ error: "code_exists" });
+    }
+  }
+  if (req.body?.name !== undefined) {
+    name = String(req.body.name).trim();
+    if (!name) return res.status(400).json({ error: "name_required" });
+  }
+  if (req.body?.city !== undefined) city = String(req.body.city).trim();
+
+  db.prepare("UPDATE stores SET code=?,name=?,city=?,updated_at=? WHERE id=?")
+    .run(code, name, city, now(), existing.id);
+  auditLog("store.updated", code);
+  return res.json({ store: serializeStore(db.prepare("SELECT * FROM stores WHERE id=?").get(existing.id)) });
+});
+
+catalogRouter.delete("/stores/:id", requireOwner, (req, res) => {
+  const store = db.prepare("SELECT id,code FROM stores WHERE id=?").get(req.params.id) as any;
+  if (!store) return res.status(404).json({ error: "store_not_found" });
+  const counts = {
+    bookings: (db.prepare("SELECT COUNT(*) AS count FROM bookings WHERE store_id=?").get(store.id) as any).count as number,
+    sessions: (db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE store_id=?").get(store.id) as any).count as number,
+    rentalUnits: (db.prepare("SELECT COUNT(*) AS count FROM rental_units WHERE store_id=?").get(store.id) as any).count as number,
+    productQty: (db.prepare("SELECT COUNT(*) AS count FROM product_store_qty WHERE store_id=?").get(store.id) as any).count as number,
+  };
+  if (Object.values(counts).some((count) => count > 0)) {
+    return res.status(409).json({ error: "store_in_use", counts });
+  }
+  db.prepare("DELETE FROM stores WHERE id=?").run(store.id);
+  auditLog("store.deleted", store.code || store.id);
+  return res.json({ ok: true });
 });
 
 function serializeProduct(p: any) {
   return {
     id: p.id, productNo: p.product_no, type: p.type, activityType: p.activity_type,
+    sku: p.sku,
     name: p.name, nameFr: p.name_fr, webDescEn: p.web_desc_en, webDescFr: p.web_desc_fr,
     imageUrl: p.image_url, durationType: p.duration_type, duration: p.duration,
     defaultUnitPrice: p.default_unit_price, securityDeposit: p.security_deposit,
     retailItem: p.retail_item, fixedLocation: p.fixed_location,
     availableOnWeb: !!p.available_on_web, minQty: p.min_qty, maxQty: p.max_qty,
+    lateFeePerDay: p.late_fee_per_day || 0,
+    scheduling: {
+      bufferBefore: p.buffer_before || 0, bufferAfter: p.buffer_after || 0,
+      minNoticeHours: p.min_notice_hours || 0, maxAdvanceDays: p.max_advance_days || 365,
+      cancellationHours: p.cancellation_hours || 24,
+      customerCanCancel: !!p.customer_can_cancel, customerCanReschedule: !!p.customer_can_reschedule,
+      depositPolicy: p.deposit_policy || "PICKUP",
+    },
     shopifyProductId: p.shopify_product_id,
+    navSyncedAt: p.nav_synced_at || "",
     kit: db.prepare("SELECT item_no AS itemNo, description, qty FROM product_kit_items WHERE product_id = ?").all(p.id),
     prices: db.prepare("SELECT description, price FROM product_prices WHERE product_id = ?").all(p.id),
+    translations: db.prepare("SELECT locale, name, description FROM product_translations WHERE product_id = ? ORDER BY locale").all(p.id),
     storeQty: db.prepare("SELECT store_id AS storeId, qty FROM product_store_qty WHERE product_id = ?").all(p.id),
+    addons: db.prepare(`SELECT id,addon_product_no AS addonProductNo,name,price,max_qty AS maxQty,
+      required,active,shopify_variant_id AS shopifyVariantId FROM product_addons WHERE product_id=? ORDER BY name`).all(p.id),
+    crossSell: db.prepare(`SELECT suggested.product_no AS productNo,suggested.name,suggested.type,
+      suggested.default_unit_price AS defaultUnitPrice
+      FROM product_cross_sell cross_sell
+      JOIN products suggested ON suggested.product_no=cross_sell.suggested_product_no
+      WHERE cross_sell.product_id=? ORDER BY suggested.name`).all(p.id),
   };
 }
+
+catalogRouter.post("/products", requirePerm("products"), (req, res) => {
+  const productNo = String(req.body?.productNo ?? "").trim();
+  const type = String(req.body?.type ?? "").trim().toUpperCase();
+  const name = String(req.body?.name ?? "").trim();
+  if (!productNo) return res.status(400).json({ error: "productNo_required" });
+  if (db.prepare("SELECT id FROM products WHERE product_no = ?").get(productNo)) {
+    return res.status(409).json({ error: "product_exists" });
+  }
+  if (type !== "RENTAL" && type !== "COURSE") {
+    return res.status(400).json({ error: "type_invalid" });
+  }
+  if (!name) return res.status(400).json({ error: "name_required" });
+
+  const timestamp = now();
+  const product = {
+    id: uid(),
+    productNo,
+    type: type as "RENTAL" | "COURSE",
+    name,
+    defaultUnitPrice: Number(req.body?.defaultUnitPrice) || 0,
+    securityDeposit: type === "RENTAL" ? Number(req.body?.securityDeposit) || 0 : 0,
+    durationType: type === "RENTAL" ? String(req.body?.durationType ?? "").trim() : "",
+    duration: type === "RENTAL" ? Number(req.body?.duration) || 0 : 0,
+    retailItem: String(req.body?.retailItem ?? "").trim(),
+    sku: String(req.body?.sku ?? "").trim(),
+    minQty: Math.max(1, Number(req.body?.minQty) || 1),
+    maxQty: Math.max(1, Number(req.body?.maxQty) || 10),
+    availableOnWeb: req.body?.availableOnWeb !== false,
+  };
+  db.prepare(`INSERT INTO products (
+      id,product_no,type,activity_type,name,name_fr,web_desc_en,web_desc_fr,image_url,
+      duration_type,duration,default_unit_price,security_deposit,retail_item,fixed_location,
+      available_on_web,min_qty,max_qty,shopify_product_id,sku,nav_synced_at,updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(product.id, product.productNo, product.type, product.type, product.name, "", "", "", "",
+      product.durationType, product.duration, product.defaultUnitPrice, product.securityDeposit,
+      product.retailItem, "", product.availableOnWeb ? 1 : 0, product.minQty, product.maxQty,
+      "", product.sku, "", timestamp);
+  auditLog("product.created", productNo);
+
+  void pushProductToNav(product)
+    .then((result) => {
+      if (!result.ok) {
+        console.warn("[nav] NAV push failed", result.detail || "Unknown NAV error");
+        return;
+      }
+      const syncedAt = now();
+      db.prepare("UPDATE products SET nav_synced_at=? WHERE id=?").run(syncedAt, product.id);
+      auditLog("product.nav_pushed", productNo);
+    })
+    .catch((err) => console.warn("[nav] NAV push failed", err));
+
+  return res.json({
+    product: serializeProduct(db.prepare("SELECT * FROM products WHERE id=?").get(product.id)),
+  });
+});
 
 catalogRouter.get("/products", (req, res) => {
   const { type, q } = req.query as Record<string, string>;
   let sql = "SELECT * FROM products WHERE 1=1";
   const params: unknown[] = [];
   if (type) { sql += " AND type = ?"; params.push(type); }
-  if (q) { sql += " AND (name LIKE ? OR product_no LIKE ?)"; params.push(`%${q}%`, `%${q}%`); }
+  if (q) {
+    sql += " AND (name LIKE ? OR product_no LIKE ? OR sku LIKE ?)";
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
   sql += " ORDER BY type, name";
   res.json({ products: (db.prepare(sql).all(...params) as any[]).map(serializeProduct) });
+});
+
+catalogRouter.get("/localization", (_req, res) => {
+  const languages = pj<string[]>(getSettings().enabledLanguages, ["en", "fr"]);
+  const products = db.prepare("SELECT id,product_no AS productNo,type,name FROM products ORDER BY type,name").all() as any[];
+  const rows = products.map((product) => {
+    const translations = db.prepare("SELECT locale,name,description FROM product_translations WHERE product_id=?").all(product.id) as any[];
+    const missing = languages.filter((locale) => {
+      const tr = translations.find((x) => x.locale === locale);
+      return !tr?.name?.trim() || !tr?.description?.trim();
+    });
+    return { ...product, missing, complete: missing.length === 0 };
+  });
+  res.json({
+    languages,
+    products: rows,
+    summary: {
+      complete: rows.filter((x) => x.complete).length,
+      incomplete: rows.filter((x) => !x.complete).length,
+      total: rows.length,
+    },
+  });
+});
+
+catalogRouter.get("/cross-sell", requirePerm("bookings"), (req, res) => {
+  const raw = req.query.productNos;
+  const productNos = [...new Set(
+    (Array.isArray(raw) ? raw : raw == null ? [] : [raw])
+      .flatMap((value) => String(value).split(","))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )];
+  if (!productNos.length) return res.json({ suggestions: [] });
+
+  const placeholders = productNos.map(() => "?").join(",");
+  const suggestions = db.prepare(`SELECT DISTINCT suggested.product_no AS productNo,suggested.name,suggested.type,
+    suggested.default_unit_price AS defaultUnitPrice
+    FROM products source
+    JOIN product_cross_sell cross_sell ON cross_sell.product_id=source.id
+    JOIN products suggested ON suggested.product_no=cross_sell.suggested_product_no
+    WHERE source.product_no IN (${placeholders})
+      AND suggested.product_no NOT IN (${placeholders})
+    ORDER BY suggested.name`).all(...productNos, ...productNos);
+  return res.json({ suggestions });
 });
 
 catalogRouter.get("/products/:id", (req, res) => {
@@ -46,22 +244,91 @@ catalogRouter.get("/products/:id", (req, res) => {
   res.json({ product });
 });
 
-catalogRouter.put("/products/:id", (req, res) => {
+catalogRouter.post("/products/:id/push-nav", requirePerm("products"), async (req, res) => {
+  const p = db.prepare("SELECT * FROM products WHERE id=? OR product_no=?").get(req.params.id, req.params.id) as any;
+  if (!p) return res.status(404).json({ error: "Product not found" });
+  const result = await pushProductToNav({
+    productNo: p.product_no,
+    type: p.type,
+    name: p.name,
+    defaultUnitPrice: p.default_unit_price,
+    securityDeposit: p.security_deposit,
+    durationType: p.duration_type,
+    duration: p.duration,
+    retailItem: p.retail_item,
+    sku: p.sku,
+    minQty: p.min_qty,
+    maxQty: p.max_qty,
+    availableOnWeb: !!p.available_on_web,
+  });
+  if (!result.ok) return res.json(result);
+  const navSyncedAt = now();
+  db.prepare("UPDATE products SET nav_synced_at=? WHERE id=?").run(navSyncedAt, p.id);
+  auditLog("product.nav_pushed", p.product_no);
+  return res.json({ ok: true, navSyncedAt });
+});
+
+catalogRouter.get("/products/:id/bookings", requirePerm("bookings"), (req, res) => {
+  const product = db.prepare("SELECT id,product_no FROM products WHERE id=? OR product_no=?").get(req.params.id, req.params.id) as any;
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const rows = db.prepare(`SELECT DISTINCT b.id FROM bookings b JOIN booking_lines l ON l.booking_id=b.id
+    WHERE l.product_no=? ORDER BY b.created_at DESC LIMIT 200`).all(product.product_no) as { id: string }[];
+  res.json({ bookings: rows.map((row) => serializeBooking(row.id)).filter(Boolean) });
+});
+
+catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
-  const { imageUrl, webDescEn, webDescFr, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, prices } = req.body ?? {};
+  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSellProductNos } = req.body ?? {};
+  const sku = req.body?.sku === undefined ? null : String(req.body.sku).trim();
+  let normalizedCrossSell: string[] | undefined;
+  if (crossSellProductNos !== undefined) {
+    if (crossSellProductNos !== null && !Array.isArray(crossSellProductNos)) {
+      return res.status(400).json({ error: "crossSellProductNos must be an array" });
+    }
+    normalizedCrossSell = [...new Set<string>(
+      (crossSellProductNos ?? []).map((value: unknown) => String(value).trim()).filter(Boolean),
+    )].filter((productNo) => productNo !== p.product_no && productNo !== String(req.body?.productNo ?? ""));
+    if (normalizedCrossSell.length) {
+      const placeholders = normalizedCrossSell.map(() => "?").join(",");
+      const existing = db.prepare(`SELECT product_no FROM products WHERE product_no IN (${placeholders})`)
+        .all(...normalizedCrossSell) as { product_no: string }[];
+      const existingNos = new Set(existing.map((row) => row.product_no));
+      const missing = normalizedCrossSell.filter((productNo) => !existingNos.has(productNo));
+      if (missing.length) return res.status(400).json({ error: `Unknown cross-sell products: ${missing.join(", ")}` });
+    }
+  }
+  if (Array.isArray(translations)) {
+    const required = pj<string[]>(getSettings().enabledLanguages, ["en", "fr"]);
+    const missing = required.filter((locale) =>
+      !translations.some((tr: any) => tr.locale === locale && String(tr.name || "").trim()),
+    );
+    if (missing.length) return res.status(400).json({ error: `Missing required translations: ${missing.join(", ")}` });
+  }
   // Prices are editable here; in live NAV mode the next catalog sync will
   // overwrite them with NAV's — NAV stays the source of truth for pricing.
   db.prepare(
     `UPDATE products SET image_url = COALESCE(?, image_url), web_desc_en = COALESCE(?, web_desc_en),
      web_desc_fr = COALESCE(?, web_desc_fr), shopify_product_id = COALESCE(?, shopify_product_id),
+     sku = COALESCE(?, sku),
      available_on_web = COALESCE(?, available_on_web),
      default_unit_price = COALESCE(?, default_unit_price),
-     security_deposit = COALESCE(?, security_deposit), updated_at = ? WHERE id = ?`,
-  ).run(imageUrl ?? null, webDescEn ?? null, webDescFr ?? null, shopifyProductId ?? null,
+     security_deposit = COALESCE(?, security_deposit),
+     late_fee_per_day = COALESCE(?, late_fee_per_day), updated_at = ? WHERE id = ?`,
+  ).run(imageUrl ?? null, webDescEn ?? null, webDescFr ?? null, shopifyProductId ?? null, sku,
     availableOnWeb == null ? null : availableOnWeb ? 1 : 0,
     defaultUnitPrice == null ? null : Number(defaultUnitPrice),
-    securityDeposit == null ? null : Number(securityDeposit), now(), p.id);
+    securityDeposit == null ? null : Number(securityDeposit),
+    lateFeePerDay == null ? null : Number(lateFeePerDay), now(), p.id);
+  if (scheduling && typeof scheduling === "object") {
+    db.prepare(`UPDATE products SET buffer_before=?,buffer_after=?,min_notice_hours=?,max_advance_days=?,
+      cancellation_hours=?,customer_can_cancel=?,customer_can_reschedule=?,deposit_policy=?,updated_at=? WHERE id=?`)
+      .run(Math.max(0, Number(scheduling.bufferBefore) || 0), Math.max(0, Number(scheduling.bufferAfter) || 0),
+        Math.max(0, Number(scheduling.minNoticeHours) || 0), Math.max(1, Number(scheduling.maxAdvanceDays) || 365),
+        Math.max(0, Number(scheduling.cancellationHours) || 0), scheduling.customerCanCancel === false ? 0 : 1,
+        scheduling.customerCanReschedule === false ? 0 : 1,
+        ["ONLINE", "PICKUP", "NONE"].includes(scheduling.depositPolicy) ? scheduling.depositPolicy : "PICKUP", now(), p.id);
+  }
   if (Array.isArray(kit)) {
     db.prepare("DELETE FROM product_kit_items WHERE product_id = ?").run(p.id);
     const ins = db.prepare("INSERT INTO product_kit_items (id, product_id, item_no, description, qty) VALUES (?, ?, ?, ?, ?)");
@@ -74,11 +341,232 @@ catalogRouter.put("/products/:id", (req, res) => {
       if (String(t.description ?? "").trim()) ins.run(uid(), p.id, String(t.description).trim().toUpperCase(), Number(t.price) || 0);
     }
   }
+  if (Array.isArray(addons)) {
+    db.prepare("DELETE FROM product_addons WHERE product_id=?").run(p.id);
+    const ins = db.prepare(`INSERT INTO product_addons(id,product_id,addon_product_no,name,price,max_qty,required,active,shopify_variant_id)
+      VALUES(?,?,?,?,?,?,?,?,?)`);
+    for (const a of addons) {
+      if (!String(a.name || "").trim() || !String(a.addonProductNo || "").trim()) continue;
+      ins.run(a.id || uid(), p.id, String(a.addonProductNo), String(a.name), Number(a.price) || 0,
+        Math.max(1, Number(a.maxQty) || 1), a.required ? 1 : 0, a.active === false ? 0 : 1, String(a.shopifyVariantId || ""));
+    }
+  }
+  if (normalizedCrossSell !== undefined) {
+    const replaceCrossSell = db.transaction(() => {
+      db.prepare("DELETE FROM product_cross_sell WHERE product_id=?").run(p.id);
+      const insert = db.prepare("INSERT INTO product_cross_sell(product_id,suggested_product_no) VALUES(?,?)");
+      for (const productNo of normalizedCrossSell) insert.run(p.id, productNo);
+    });
+    replaceCrossSell();
+  }
+  if (Array.isArray(translations)) {
+    const upsert = db.prepare(`INSERT INTO product_translations(product_id,locale,name,description)
+      VALUES(?,?,?,?) ON CONFLICT(product_id,locale) DO UPDATE SET name=excluded.name,description=excluded.description`);
+    for (const tr of translations) {
+      const locale = String(tr.locale || "").toLowerCase();
+      if (!/^[a-z]{2}(-[a-z]{2})?$/.test(locale)) continue;
+      upsert.run(p.id, locale, String(tr.name || "").trim(), String(tr.description || ""));
+    }
+    const en = translations.find((tr: any) => tr.locale === "en");
+    const fr = translations.find((tr: any) => tr.locale === "fr");
+    if (en) db.prepare("UPDATE products SET name=?,web_desc_en=? WHERE id=?").run(String(en.name || p.name), String(en.description || ""), p.id);
+    if (fr) db.prepare("UPDATE products SET name_fr=?,web_desc_fr=? WHERE id=?").run(String(fr.name || ""), String(fr.description || ""), p.id);
+  }
   res.json({ product: serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(p.id)) });
 });
 
+catalogRouter.get("/intake-forms", (_req, res) => {
+  const forms = (db.prepare(`SELECT f.*,p.product_no FROM intake_forms f LEFT JOIN products p ON p.id=f.product_id
+    ORDER BY f.name`).all() as any[]).map((f) => ({
+      id: f.id, name: f.name, productId: f.product_id, productNo: f.product_no,
+      enabled: !!f.enabled, fields: pj(f.fields, []),
+    }));
+  res.json({ forms });
+});
+
+catalogRouter.post("/intake-forms", requirePerm("products"), (req, res) => {
+  const { id = uid(), name, productId, enabled = true, fields = [] } = req.body ?? {};
+  if (!String(name || "").trim() || !Array.isArray(fields)) return res.status(400).json({ error: "name and fields[] are required" });
+  const clean = fields.map((f: any) => ({
+    id: String(f.id || uid()), label: String(f.label || "").slice(0, 160),
+    type: ["text", "textarea", "select", "checkbox", "date"].includes(f.type) ? f.type : "text",
+    required: !!f.required, options: Array.isArray(f.options) ? f.options.map(String) : [],
+  })).filter((f: any) => f.label);
+  db.prepare(`INSERT INTO intake_forms(id,name,product_id,enabled,fields,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name,product_id=excluded.product_id,enabled=excluded.enabled,
+    fields=excluded.fields,updated_at=excluded.updated_at`)
+    .run(id, String(name).trim(), productId || null, enabled ? 1 : 0, JSON.stringify(clean), now(), now());
+  res.json({ id });
+});
+
+catalogRouter.delete("/intake-forms/:id", requirePerm("products"), (req, res) => {
+  db.prepare("DELETE FROM intake_forms WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+catalogRouter.post("/products/:id/addons", requirePerm("products"), (req, res) => {
+  const product = db.prepare("SELECT id FROM products WHERE id=?").get(req.params.id);
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const { id = uid(), addonProductNo, name, price = 0, maxQty = 1, required = false, active = true, shopifyVariantId = "" } = req.body ?? {};
+  if (!addonProductNo || !name) return res.status(400).json({ error: "addonProductNo and name are required" });
+  db.prepare(`INSERT INTO product_addons(id,product_id,addon_product_no,name,price,max_qty,required,active,shopify_variant_id)
+    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET addon_product_no=excluded.addon_product_no,
+    name=excluded.name,price=excluded.price,max_qty=excluded.max_qty,required=excluded.required,active=excluded.active,
+    shopify_variant_id=excluded.shopify_variant_id`)
+    .run(id, req.params.id, String(addonProductNo), String(name), Number(price) || 0, Math.max(1, Number(maxQty) || 1), required ? 1 : 0, active ? 1 : 0, String(shopifyVariantId));
+  res.json({ id });
+});
+
+catalogRouter.delete("/products/:productId/addons/:id", requirePerm("products"), (req, res) => {
+  db.prepare("DELETE FROM product_addons WHERE id=? AND product_id=?").run(req.params.id, req.params.productId);
+  res.json({ ok: true });
+});
+
+catalogRouter.get("/availability-rules", requirePerm("availability"), (req, res) => {
+  const { scopeType, scopeId } = req.query as Record<string, string>;
+  let sql = "SELECT * FROM availability_rules WHERE 1=1";
+  const params: unknown[] = [];
+  if (scopeType) { sql += " AND scope_type=?"; params.push(scopeType); }
+  if (scopeId) { sql += " AND scope_id=?"; params.push(scopeId); }
+  res.json({ rules: db.prepare(sql + " ORDER BY kind,weekday,starts_at").all(...params) });
+});
+
+catalogRouter.post("/availability-rules", requirePerm("availability"), (req, res) => {
+  const { id = uid(), scopeType, scopeId, kind, weekday = null, startsAt = "", endsAt = "", from = "", to = "", label = "" } = req.body ?? {};
+  if (!["STORE", "PRODUCT", "RESOURCE"].includes(scopeType) || !scopeId || !["OPENING", "BLACKOUT"].includes(kind)) {
+    return res.status(400).json({ error: "Valid scopeType, scopeId and kind are required" });
+  }
+  if (kind === "OPENING" && (!Number.isInteger(Number(weekday)) || !from || !to)) return res.status(400).json({ error: "Opening rules require weekday, from and to" });
+  if (kind === "BLACKOUT" && (!startsAt || !endsAt)) return res.status(400).json({ error: "Blackouts require startsAt and endsAt" });
+  db.prepare(`INSERT INTO availability_rules(id,scope_type,scope_id,kind,weekday,starts_at,ends_at,from_time,to_time,label,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET scope_type=excluded.scope_type,scope_id=excluded.scope_id,
+    kind=excluded.kind,weekday=excluded.weekday,starts_at=excluded.starts_at,ends_at=excluded.ends_at,
+    from_time=excluded.from_time,to_time=excluded.to_time,label=excluded.label`)
+    .run(id, scopeType, scopeId, kind, weekday, startsAt, endsAt, from, to, label, now());
+  res.json({ id });
+});
+
+catalogRouter.delete("/availability-rules/:id", requirePerm("availability"), (req, res) => {
+  db.prepare("DELETE FROM availability_rules WHERE id=?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// --- Serialized rental fleet -------------------------------------------------
+
+function serializeUnit(u: any) {
+  const maintenanceDue = (u.next_service_usage != null && u.usage_count >= u.next_service_usage)
+    || (u.next_service_at && u.next_service_at <= now());
+  return {
+    id: u.id, productId: u.product_id, productNo: u.product_no, productName: u.product_name,
+    storeId: u.store_id, serialNo: u.serial_no, barcode: u.barcode,
+    status: u.status, condition: u.condition, notes: u.notes, updatedAt: u.updated_at,
+    usageCount: u.usage_count || 0, nextServiceUsage: u.next_service_usage,
+    lastServiceAt: u.last_service_at, nextServiceAt: u.next_service_at,
+    maintenanceDue: Boolean(maintenanceDue),
+    unavailability: db.prepare(`SELECT id,starts_at AS startsAt,ends_at AS endsAt,reason
+      FROM rental_unit_unavailability WHERE unit_id=? AND ends_at>=? ORDER BY starts_at`)
+      .all(u.id, now().slice(0, 10)),
+  };
+}
+
+catalogRouter.get("/rental-units", requirePerm("products"), (req, res) => {
+  const { productId, productNo, storeId, status, q } = req.query as Record<string, string>;
+  let sql = `SELECT u.*, p.product_no, p.name AS product_name FROM rental_units u
+             JOIN products p ON p.id = u.product_id WHERE 1=1`;
+  const params: unknown[] = [];
+  if (productId) { sql += " AND u.product_id = ?"; params.push(productId); }
+  if (productNo) { sql += " AND p.product_no = ?"; params.push(productNo); }
+  if (storeId) { sql += " AND u.store_id = ?"; params.push(storeId); }
+  if (status) { sql += " AND u.status = ?"; params.push(status); }
+  if (q) { sql += " AND (u.barcode LIKE ? OR u.serial_no LIKE ? OR p.name LIKE ?)"; params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  sql += " ORDER BY p.name, u.barcode";
+  res.json({ units: (db.prepare(sql).all(...params) as any[]).map(serializeUnit) });
+});
+
+catalogRouter.post("/rental-units", requirePerm("products"), (req, res) => {
+  const { productId, storeId, serialNo = "", barcode, condition = "GOOD", notes = "", nextServiceUsage = 25, nextServiceAt = null } = req.body ?? {};
+  if (!productId || !barcode) return res.status(400).json({ error: "productId and barcode are required" });
+  const product = db.prepare("SELECT id FROM products WHERE id = ? AND type = 'RENTAL'").get(productId);
+  if (!product) return res.status(400).json({ error: "Rental product not found" });
+  try {
+    const id = uid();
+    db.prepare(`INSERT INTO rental_units
+      (id, product_id, store_id, serial_no, barcode, status, condition, notes,next_service_usage,next_service_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'AVAILABLE', ?, ?, ?, ?, ?)`)
+      .run(id, productId, storeId || null, String(serialNo), String(barcode).trim(), condition, notes,
+        Number(nextServiceUsage) || 25, nextServiceAt || null, now());
+    const unit = db.prepare(`SELECT u.*, p.product_no, p.name AS product_name FROM rental_units u
+      JOIN products p ON p.id = u.product_id WHERE u.id = ?`).get(id);
+    res.json({ unit: serializeUnit(unit) });
+  } catch (err: any) {
+    res.status(400).json({ error: String(err.message).includes("UNIQUE") ? "Barcode already exists" : String(err.message) });
+  }
+});
+
+catalogRouter.put("/rental-units/:id", requirePerm("products"), (req, res) => {
+  const unit = db.prepare("SELECT id FROM rental_units WHERE id = ?").get(req.params.id);
+  if (!unit) return res.status(404).json({ error: "Rental unit not found" });
+  const { storeId, serialNo, barcode, status, condition, notes, nextServiceUsage, nextServiceAt } = req.body ?? {};
+  db.prepare(`UPDATE rental_units SET store_id=COALESCE(?,store_id), serial_no=COALESCE(?,serial_no),
+    barcode=COALESCE(?,barcode), status=COALESCE(?,status), condition=COALESCE(?,condition),
+    notes=COALESCE(?,notes), next_service_usage=COALESCE(?,next_service_usage),
+    next_service_at=COALESCE(?,next_service_at), updated_at=? WHERE id=?`)
+    .run(storeId ?? null, serialNo ?? null, barcode ?? null, status ?? null, condition ?? null, notes ?? null,
+      nextServiceUsage ?? null, nextServiceAt ?? null, now(), req.params.id);
+  const updated = db.prepare(`SELECT u.*, p.product_no, p.name AS product_name FROM rental_units u
+    JOIN products p ON p.id = u.product_id WHERE u.id = ?`).get(req.params.id);
+  res.json({ unit: serializeUnit(updated) });
+});
+
+catalogRouter.get("/rental-units/:id/maintenance", requirePerm("products"), (req, res) => {
+  const unit = db.prepare("SELECT id FROM rental_units WHERE id=?").get(req.params.id);
+  if (!unit) return res.status(404).json({ error: "Rental unit not found" });
+  res.json({ logs: db.prepare(`SELECT id,kind,notes,usage_at_service AS usageAtService,
+    serviced_at AS servicedAt,next_service_usage AS nextServiceUsage,next_service_at AS nextServiceAt
+    FROM maintenance_logs WHERE unit_id=? ORDER BY serviced_at DESC`).all(req.params.id) });
+});
+
+catalogRouter.post("/rental-units/:id/maintenance", requirePerm("products"), (req, res) => {
+  const unit = db.prepare("SELECT * FROM rental_units WHERE id=?").get(req.params.id) as any;
+  if (!unit) return res.status(404).json({ error: "Rental unit not found" });
+  const { kind = "ROUTINE", notes = "", nextServiceUsage, nextServiceAt } = req.body ?? {};
+  const nextUsage = Number(nextServiceUsage) > unit.usage_count ? Number(nextServiceUsage) : unit.usage_count + 25;
+  const nextDate = String(nextServiceAt || "");
+  db.transaction(() => {
+    db.prepare(`INSERT INTO maintenance_logs
+      (id,unit_id,kind,notes,usage_at_service,serviced_at,next_service_usage,next_service_at)
+      VALUES(?,?,?,?,?,?,?,?)`)
+      .run(uid(), unit.id, String(kind), String(notes), unit.usage_count, now(), nextUsage, nextDate || null);
+    db.prepare(`UPDATE rental_units SET status='AVAILABLE',
+      condition=CASE WHEN condition='DAMAGED' THEN 'GOOD' ELSE condition END,
+      last_service_at=?,next_service_usage=?,next_service_at=?,updated_at=? WHERE id=?`)
+      .run(now(), nextUsage, nextDate || null, now(), unit.id);
+  })();
+  const updated = db.prepare(`SELECT u.*,p.product_no,p.name AS product_name FROM rental_units u
+    JOIN products p ON p.id=u.product_id WHERE u.id=?`).get(unit.id);
+  res.json({ unit: serializeUnit(updated) });
+});
+
+catalogRouter.post("/rental-units/:id/unavailability", requirePerm("products"), (req, res) => {
+  const unit = db.prepare("SELECT id FROM rental_units WHERE id=?").get(req.params.id);
+  if (!unit) return res.status(404).json({ error: "Rental unit not found" });
+  const { startsAt, endsAt, reason = "Maintenance" } = req.body ?? {};
+  if (!startsAt || !endsAt || String(endsAt) < String(startsAt)) {
+    return res.status(400).json({ error: "A valid start and end date are required" });
+  }
+  const id = uid();
+  db.prepare(`INSERT INTO rental_unit_unavailability(id,unit_id,starts_at,ends_at,reason,created_at)
+    VALUES(?,?,?,?,?,?)`).run(id, req.params.id, String(startsAt), String(endsAt), String(reason), now());
+  res.json({ block: { id, startsAt, endsAt, reason } });
+});
+
+catalogRouter.delete("/rental-units/:unitId/unavailability/:id", requirePerm("products"), (req, res) => {
+  db.prepare("DELETE FROM rental_unit_unavailability WHERE id=? AND unit_id=?").run(req.params.id, req.params.unitId);
+  res.json({ ok: true });
+});
+
 /** Pull the activity catalog from NAV (R0 / class step 2: NAV → app → Shopify). */
-catalogRouter.post("/products/sync", async (_req, res) => {
+catalogRouter.post("/products/sync", requirePerm("products"), async (_req, res) => {
   try {
     if (navMode() === "mock") {
       const count = (db.prepare("SELECT COUNT(*) AS n FROM products").get() as any).n;
@@ -128,7 +616,7 @@ catalogRouter.post("/products/sync", async (_req, res) => {
  *  the booking.* metafields the storefront widget reads — the "publish" half of
  *  R0's NAV → Shopify flow, no manual product creation needed. */
 let metafieldDefsEnsured = false;
-catalogRouter.post("/products/:id/push-shopify", async (req, res) => {
+catalogRouter.post("/products/:id/push-shopify", requirePerm("products"), async (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
   try {
@@ -171,6 +659,8 @@ function serializeSession(s: any) {
     storeId: s.store_id, roomId: s.room_id, capacity: s.capacity, booked: sessionBooked(s.id),
     instanceNo: s.instance_no, instanceCount: s.instance_count,
     trainerIds: (db.prepare("SELECT resource_id FROM session_trainers WHERE session_id = ?").all(s.id) as any[]).map((t) => t.resource_id),
+    deliveryMode: s.delivery_mode || "IN_PERSON", meetingUrl: s.meeting_url || "",
+    meetingHostUrl: s.meeting_host_url || "", zoomMeetingId: s.zoom_meeting_id || "",
   };
 }
 
@@ -190,38 +680,48 @@ catalogRouter.get("/sessions", (req, res) => {
 
 /** Create one session, or a series (occurrences > 1) — e.g. a night class over 3
  *  Tuesday evenings. All instances share seriesId and block room+trainers. */
-catalogRouter.post("/sessions", (req, res) => {
-  const { productId, startsAt, endsAt, storeId, roomId, trainerIds = [], capacity = 8, occurrences = 1, intervalDays = 7 } = req.body ?? {};
+catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
+  const { productId, startsAt, endsAt, storeId, roomId, trainerIds = [], capacity = 8, occurrences = 1, intervalDays = 7,
+    deliveryMode = "IN_PERSON", meetingUrl = "", createZoom = false } = req.body ?? {};
   if (!productId || !startsAt || !endsAt || !storeId) return res.status(400).json({ error: "productId, startsAt, endsAt, storeId are required" });
   const seriesId = uid();
   const n = Math.max(1, Math.min(12, Number(occurrences) || 1));
   const out: any[] = [];
+  const product = db.prepare("SELECT name FROM products WHERE id=?").get(productId) as { name: string } | undefined;
   for (let i = 0; i < n; i++) {
     const offset = i * (Number(intervalDays) || 7) * 86_400_000;
     const id = uid();
+    const occurrenceStart = new Date(new Date(startsAt).getTime() + offset).toISOString();
+    const occurrenceEnd = new Date(new Date(endsAt).getTime() + offset).toISOString();
+    let joinUrl = String(meetingUrl || ""), hostUrl = "", zoomId = "";
+    if (createZoom && deliveryMode !== "IN_PERSON") {
+      try {
+        const zoom = await createZoomMeeting({ topic: `${product?.name || "Class"}${n > 1 ? ` (${i + 1}/${n})` : ""}`, startsAt: occurrenceStart, endsAt: occurrenceEnd });
+        joinUrl = zoom.joinUrl; hostUrl = zoom.startUrl; zoomId = zoom.id;
+      } catch (err) {
+        return res.status(502).json({ error: `Zoom meeting creation failed: ${String((err as Error).message || err)}` });
+      }
+    }
     db.prepare(
-      `INSERT INTO sessions (id, product_id, series_id, starts_at, ends_at, store_id, room_id, capacity, instance_no, instance_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id, productId, seriesId,
-      new Date(new Date(startsAt).getTime() + offset).toISOString(),
-      new Date(new Date(endsAt).getTime() + offset).toISOString(),
-      storeId, roomId ?? null, Number(capacity) || 8, i + 1, n,
-    );
+      `INSERT INTO sessions (id, product_id, series_id, starts_at, ends_at, store_id, room_id, capacity, instance_no, instance_count,
+        delivery_mode,meeting_url,meeting_host_url,zoom_meeting_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, productId, seriesId, occurrenceStart, occurrenceEnd,
+      storeId, roomId ?? null, Number(capacity) || 8, i + 1, n, deliveryMode, joinUrl, hostUrl, zoomId);
     for (const t of trainerIds) db.prepare("INSERT OR IGNORE INTO session_trainers (session_id, resource_id) VALUES (?, ?)").run(id, t);
     out.push(serializeSession(db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)));
   }
   res.json({ sessions: out });
 });
 
-catalogRouter.delete("/sessions/:id", (req, res) => {
+catalogRouter.delete("/sessions/:id", requirePerm("sessions"), (req, res) => {
   db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
 
 // --- Resources (rooms & trainers, class step 3A/3B) --------------------------
 
-catalogRouter.get("/resources", (req, res) => {
+catalogRouter.get("/resources", requirePerm("sessions"), (req, res) => {
   const { type } = req.query as Record<string, string>;
   const rows = type
     ? db.prepare("SELECT * FROM resources WHERE type = ? ORDER BY name").all(type)
@@ -229,7 +729,7 @@ catalogRouter.get("/resources", (req, res) => {
   res.json({ resources: (rows as any[]).map((r) => ({ id: r.id, type: r.type, name: r.name, storeId: r.store_id, notes: r.notes })) });
 });
 
-catalogRouter.post("/resources", (req, res) => {
+catalogRouter.post("/resources", requirePerm("sessions"), (req, res) => {
   const { type, name, storeId, notes = "" } = req.body ?? {};
   if (!type || !name) return res.status(400).json({ error: "type and name are required" });
   const id = uid();
@@ -237,13 +737,13 @@ catalogRouter.post("/resources", (req, res) => {
   res.json({ resource: { id, type, name, storeId, notes } });
 });
 
-catalogRouter.delete("/resources/:id", (req, res) => {
+catalogRouter.delete("/resources/:id", requirePerm("sessions"), (req, res) => {
   db.prepare("DELETE FROM resources WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
 
 /** Bulk availability upload (class step 3B: trainers' schedules come in as CSV). */
-catalogRouter.post("/resources/:id/availability", (req, res) => {
+catalogRouter.post("/resources/:id/availability", requirePerm("sessions"), (req, res) => {
   const slots: { date: string; from: string; to: string }[] = req.body?.slots ?? [];
   const ins = db.prepare("INSERT INTO resource_availability (id, resource_id, date, from_time, to_time) VALUES (?, ?, ?, ?, ?)");
   let added = 0;
@@ -255,7 +755,7 @@ catalogRouter.post("/resources/:id/availability", (req, res) => {
   res.json({ added });
 });
 
-catalogRouter.get("/resources/:id/availability", (req, res) => {
+catalogRouter.get("/resources/:id/availability", requirePerm("sessions"), (req, res) => {
   const { from, to } = req.query as Record<string, string>;
   let sql = "SELECT date, from_time AS \"from\", to_time AS \"to\" FROM resource_availability WHERE resource_id = ?";
   const params: unknown[] = [req.params.id];

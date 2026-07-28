@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, qs } from "../api";
 import type { BookingLite, BookingStatus } from "../api";
-import { fmtDateTime, money } from "../format";
+import { fmtDateTime, money, todayISO } from "../format";
 import { useStores } from "../components/StoreContext";
 import { StatusPill } from "../components/StatusPill";
 import { EmptyState, ErrorNote, Skeleton } from "../components/ui";
+import { useI18n } from "../components/I18n";
 
 const STATUSES: BookingStatus[] = [
   "RESERVED",
@@ -28,6 +29,7 @@ function lineDates(b: BookingLite): string {
 }
 
 export function BookingsList() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { stores, storeId: globalStoreId, storeName } = useStores();
 
@@ -36,6 +38,7 @@ export function BookingsList() {
   const [storeFilter, setStoreFilter] = useState(globalStoreId);
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
 
   const [bookings, setBookings] = useState<BookingLite[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,12 +58,12 @@ export function BookingsList() {
     setLoading(true);
     setError(null);
     api<{ bookings: BookingLite[] }>(
-      `/api/bookings${qs({ status, type, storeId: storeFilter, q: debouncedQ })}`,
+      `/api/bookings${qs({ status, type, storeId: storeFilter, q: debouncedQ, date: dateFilter })}`,
     )
       .then((d) => setBookings(d.bookings))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [status, type, storeFilter, debouncedQ]);
+  }, [status, type, storeFilter, debouncedQ, dateFilter]);
 
   useEffect(load, [load]);
 
@@ -68,17 +71,22 @@ export function BookingsList() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Bookings</h1>
-          <div className="page-sub">Rentals and course reservations</div>
+          <h1>{t("Bookings")}</h1>
+          <div className="page-sub">{t("Rentals and course reservations")}</div>
         </div>
-        <Link to="/bookings/new" className="btn btn-primary">
-          New booking
-        </Link>
+        <div className="btn-row">
+          <Link to="/bookings/new" className="btn btn-primary">
+            {t("New booking")}
+          </Link>
+          <Link to="/waitlist" className="btn">
+            {t("Waitlist")}
+          </Link>
+        </div>
       </div>
 
       <div className="filters">
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
-          <option value="">All statuses</option>
+          <option value="">{t("All statuses")}</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -86,10 +94,10 @@ export function BookingsList() {
           ))}
         </select>
         <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type">
-          <option value="">All types</option>
-          <option value="RENTAL">Rental</option>
-          <option value="COURSE">Course</option>
-          <option value="MIXED">Mixed</option>
+          <option value="">{t("All types")}</option>
+          <option value="RENTAL">{t("Rental")}</option>
+          <option value="COURSE">{t("Course")}</option>
+          <option value="MIXED">{t("Mixed")}</option>
         </select>
         <select
           value={storeFilter}
@@ -109,6 +117,19 @@ export function BookingsList() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        <input
+          type="date"
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+          aria-label="Date"
+        />
+        <button
+          type="button"
+          className={`btn ${dateFilter === todayISO() ? "active" : ""}`}
+          onClick={() => setDateFilter(dateFilter === todayISO() ? "" : todayISO())}
+        >
+          {t("Today")}
+        </button>
       </div>
 
       {error && <ErrorNote message={error} onRetry={load} />}

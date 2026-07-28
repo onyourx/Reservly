@@ -16,6 +16,7 @@ const ENDPOINT = { ACTIVITY: "/Codeunit/WSLSActivity", WEBPOS: "/Codeunit/WSWebP
 const ACTION = {
   GET_ACTIVITY_TYPE: "urn:microsoft-dynamics-schemas/codeunit/WSLSActivity:GetActivityType",
   GET_ACTIVITY_PRODUCTS: "urn:microsoft-dynamics-schemas/codeunit/WSLSActivity:GetActivityProducts",
+  UPDATE_ACTIVITY_PRODUCT: "urn:microsoft-dynamics-schemas/codeunit/WSLSActivity:UpdateActivityProduct",
   GET_ACTIVITY_AVAILABILITY: "urn:microsoft-dynamics-schemas/codeunit/WSLSActivity:GetActivityAvailability",
   CONFIRM_RESERVATION: "urn:microsoft-dynamics-schemas/codeunit/WSLSActivity:ActivityConfirmReservation",
   CANCEL_RESERVATION: "urn:microsoft-dynamics-schemas/codeunit/WSLSActivity:ActivityCancelReservation",
@@ -97,6 +98,63 @@ export interface NavActivityProduct {
   Duration: number;
   ActivityScheduling: { AvailabilityDate: string; AvailabilityTime: string; Location: string; Capacity: number; TeacherName: string }[];
   ActivityProductPrice: { Description: string; Price: number }[];
+}
+
+export interface NavProductPush {
+  productNo: string;
+  type: "RENTAL" | "COURSE";
+  name: string;
+  defaultUnitPrice?: number;
+  securityDeposit?: number;
+  durationType?: string;
+  duration?: number;
+  retailItem?: string;
+  sku?: string;
+  minQty?: number;
+  maxQty?: number;
+  availableOnWeb?: boolean;
+}
+
+/**
+ * Pushes one locally-created catalog item to LS Activity.
+ *
+ * UpdateActivityProduct is the natural write counterpart to the configured
+ * GetActivityProducts codeunit call. NAV installations can rename/customize
+ * this operation; failures are returned to the caller so deployments can
+ * refine the action without allowing integration errors to escape.
+ */
+export async function pushProductToNav(product: NavProductPush): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    if (navMode() === "mock") {
+      console.info(`[nav] mock push product ${product.productNo}`);
+      return { ok: true };
+    }
+    const resp = await soap(
+      ENDPOINT.ACTIVITY, ACTION.UPDATE_ACTIVITY_PRODUCT,
+      `<ws:UpdateActivityProduct>
+        <ws:pProductNo>${esc(product.productNo)}</ws:pProductNo>
+        <ws:pActivityType>${esc(product.type)}</ws:pActivityType>
+        <ws:pDescription>${esc(product.name)}</ws:pDescription>
+        <ws:pDefaultUnitPrice>${Number(product.defaultUnitPrice) || 0}</ws:pDefaultUnitPrice>
+        <ws:pSecurityDeposit>${Number(product.securityDeposit) || 0}</ws:pSecurityDeposit>
+        <ws:pDurationType>${esc(product.durationType)}</ws:pDurationType>
+        <ws:pDuration>${Number(product.duration) || 0}</ws:pDuration>
+        <ws:pRetailItem>${esc(product.retailItem)}</ws:pRetailItem>
+        <ws:pSKU>${esc(product.sku)}</ws:pSKU>
+        <ws:pMinQty>${Number(product.minQty) || 1}</ws:pMinQty>
+        <ws:pMaxQty>${Number(product.maxQty) || 10}</ws:pMaxQty>
+        <ws:pAvailableOnWeb>${product.availableOnWeb === false ? "false" : "true"}</ws:pAvailableOnWeb>
+        <ws:pResponseCode></ws:pResponseCode><ws:pErrorText></ws:pErrorText>
+      </ws:UpdateActivityProduct>`,
+    );
+    const returnValue = extractFirst(resp, "return_value");
+    if (String(returnValue).toLowerCase() === "false") {
+      return { ok: false, detail: String(extractFirst(resp, "pErrorText") || "NAV rejected the product") };
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export async function getActivityTypes(): Promise<{ ActivityCode: string; Description: string }[]> {

@@ -104,3 +104,16 @@
   margin: 12px 0 4px; padding: 10px 14px; border-radius: 9px; font-size: 13px;
   background: #fdf0f0; color: #b02a37; border: 1px solid #f3d2d5;
 }
+.gsl-waitlist {
+  margin: 12px 0; padding: 12px 14px; border-radius: 10px;
+  background: #fff8e8; border: 1px solid #ead28d; color: #5f4a12;
+}
+.gsl-waitlist button {
+  display: block; margin-top: 9px; padding: 9px 13px; border: 0; border-radius: 8px;
+  background: #5f4a12; color: #fff; font-weight: 700; cursor: pointer;
+}
+.gsl-addons { margin: 14px 0; padding: 13px; border: 1px solid var(--gsl-border); border-radius: 10px; }
+.gsl-addon { display: flex; align-items: center; gap: 9px; margin-top: 9px; cursor: pointer; }
+.gsl-addon > span { flex: 1; display: flex; justify-content: space-between; gap: 10px; }
+.gsl-addon small { color: #667; }
+.gsl-addon-qty { width: 58px; padding: 5px; border: 1px solid #cdd2e0; border-radius: 6px; }

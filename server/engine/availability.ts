@@ -7,6 +7,20 @@ import { db } from "../db.js";
 import { getActivityAvailability, navMode } from "../lib/nav.js";
 
 const ACTIVE = "('RESERVED','POS_PENDING','PAID','PICKED_UP')";
+const activeHoldCutoff = () => new Date().toISOString();
+
+function ruleAllows(productNo: string, storeId: string, at: string): boolean {
+  const product = db.prepare("SELECT id FROM products WHERE product_no=?").get(productNo) as any;
+  const date = at.slice(0, 10);
+  const time = at.slice(11, 16) || "00:00";
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const rules = db.prepare(`SELECT * FROM availability_rules WHERE
+    (scope_type='PRODUCT' AND scope_id=?) OR (scope_type='STORE' AND scope_id=?)`).all(product?.id || "", storeId) as any[];
+  const blackedOut = rules.some((r) => r.kind === "BLACKOUT" && r.starts_at.slice(0, 10) <= date && r.ends_at.slice(0, 10) >= date);
+  if (blackedOut) return false;
+  const opening = rules.filter((r) => r.kind === "OPENING" && Number(r.weekday) === weekday);
+  return !opening.length || opening.some((r) => r.from_time <= time && r.to_time >= time);
+}
 
 export function eachDay(from: string, to: string): string[] {
   const days: string[] = [];
@@ -38,7 +52,20 @@ export async function rentalAvailability(productNo: string, storeId: string, fro
            AND date(l.date_from) <= date(?) AND date(l.date_to) >= date(?)`,
       )
       .get(productNo, storeId, date, date) as { n: number };
-    return { date, qty: Math.max(0, totalQty - booked.n) };
+    const held = db.prepare(
+      `SELECT COALESCE(SUM(qty),0) AS n FROM booking_holds
+       WHERE product_no=? AND store_id=? AND expires_at>?
+         AND date(date_from)<=date(?) AND date(date_to)>=date(?)`,
+    ).get(productNo, storeId, activeHoldCutoff(), date, date) as { n: number };
+    const blocked = db.prepare(
+      `SELECT COUNT(DISTINCT u.id) AS n FROM rental_units u JOIN products p ON p.id=u.product_id
+       WHERE p.product_no=? AND u.store_id=?
+         AND (u.status IN ('SERVICE','RETIRED') OR EXISTS (
+           SELECT 1 FROM rental_unit_unavailability x WHERE x.unit_id=u.id
+             AND date(x.starts_at) <= date(?) AND date(x.ends_at) >= date(?)
+         ))`,
+    ).get(productNo, storeId, date, date) as { n: number };
+    return { date, qty: ruleAllows(productNo, storeId, `${date}T${from.slice(11, 16) || "00:00"}`) ? Math.max(0, totalQty - booked.n - held.n - blocked.n) : 0 };
   });
 
   if (navMode() === "live") {
@@ -65,7 +92,10 @@ export function sessionBooked(sessionId: string): number {
        WHERE l.session_id = ? AND b.status IN ${ACTIVE}`,
     )
     .get(sessionId) as { n: number };
-  return row.n;
+  const held = db.prepare(
+    "SELECT COALESCE(SUM(qty),0) AS n FROM booking_holds WHERE session_id=? AND expires_at>?",
+  ).get(sessionId, activeHoldCutoff()) as { n: number };
+  return row.n + held.n;
 }
 
 export function courseSlots(productNo: string, from: string, daysAhead: number) {
@@ -99,6 +129,7 @@ export function courseSlots(productNo: string, from: string, daysAhead: number) 
       instanceNo: s.instance_no,
       instanceCount: s.instance_count,
       trainers: trainers.map((t) => t.name),
+      availableByRules: ruleAllows(productNo, s.store_id, s.starts_at),
     };
-  });
+  }).filter((s) => s.availableByRules);
 }

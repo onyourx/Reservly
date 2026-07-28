@@ -30,6 +30,7 @@ export interface Booking {
   deposit: number;
   contractSignedAt: string | null;
   signatureName?: string;
+  idPhotoAt?: string;
   createdAt: string;
 }
 

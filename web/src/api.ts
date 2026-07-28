@@ -8,10 +8,29 @@ export interface Store {
   city: string;
 }
 
+export interface StaffUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: "owner" | "member";
+  perms: {
+    products: boolean;
+    bookings: boolean;
+    sessions: boolean;
+    reports: boolean;
+    availability: boolean;
+  };
+  storeIds: "*" | string[];
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Health {
   ok: boolean;
   navMode: "mock" | "live";
   shopifyConfigured: boolean;
+  sftpConfigured: boolean;
 }
 
 export type ProductType = "RENTAL" | "COURSE";
@@ -26,10 +45,21 @@ export interface PriceTier {
   description: string;
   price: number;
 }
+export interface ProductAddon {
+  id?: string;
+  addonProductNo: string;
+  name: string;
+  price: number;
+  maxQty: number;
+  required: boolean;
+  active: boolean;
+  shopifyVariantId: string;
+}
 
 export interface Product {
   id: string;
   productNo: string;
+  sku: string;
   type: ProductType;
   name: string;
   nameFr: string;
@@ -41,15 +71,33 @@ export interface Product {
   duration: number;
   defaultUnitPrice: number;
   securityDeposit: number;
+  lateFeePerDay: number;
   retailItem: string;
   fixedLocation: string;
   availableOnWeb: boolean;
   minQty: number;
   maxQty: number;
   shopifyProductId: string | null;
+  navSyncedAt?: string;
   kit: KitItem[];
   prices: PriceTier[];
   sessions?: Session[];
+  translations: ProductTranslation[];
+  addons: ProductAddon[];
+  crossSell?: CrossSellSuggestion[];
+}
+
+export interface CrossSellSuggestion {
+  productNo: string;
+  name: string;
+  type: ProductType;
+  defaultUnitPrice: number;
+}
+
+export interface ProductTranslation {
+  locale: string;
+  name: string;
+  description: string;
 }
 
 export interface Session {
@@ -67,6 +115,10 @@ export interface Session {
   instanceNo: number;
   instanceCount: number;
   productName?: string;
+  deliveryMode: "IN_PERSON" | "VIRTUAL" | "HYBRID";
+  meetingUrl: string;
+  meetingHostUrl: string;
+  zoomMeetingId: string;
 }
 
 export type ResourceType = "ROOM" | "TRAINER";
@@ -176,6 +228,23 @@ export interface BookingLine {
   inspectionIn?: string;
   damages: DamageRow[];
   checklist: ChecklistItem[];
+  units: RentalUnitAssignment[];
+  deliveryMode?: "IN_PERSON" | "VIRTUAL" | "HYBRID";
+  meetingUrl?: string;
+}
+
+export interface RentalUnitAssignment {
+  id: string; barcode: string; serialNo: string; status: string; condition: string;
+  storeId: string; assignedAt: string; returnedAt?: string;
+}
+
+export interface RentalUnit {
+  id: string; productId: string; productNo: string; productName: string; storeId: string;
+  serialNo: string; barcode: string; status: "AVAILABLE" | "RESERVED" | "ON_RENT" | "SERVICE" | "RETIRED";
+  condition: "NEW" | "GOOD" | "FAIR" | "DAMAGED"; notes: string; updatedAt: string;
+  usageCount: number; nextServiceUsage: number | null; lastServiceAt: string | null;
+  nextServiceAt: string | null; maintenanceDue: boolean;
+  unavailability: { id: string; startsAt: string; endsAt: string; reason: string }[];
 }
 
 export interface ChecklistItem {
@@ -213,6 +282,14 @@ export interface Booking {
   total: number;
   posTotal: number | null;
   refundDue?: number;
+  addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId: string }[];
+  checkedInAt?: string;
+  noShowAt?: string;
+  noShowFee?: number;
+  noShowFeeStatus?: string;
+  noShowDraftOrderId?: string;
+  intakeResponses?: Record<string, unknown>;
+  rescheduleCount?: number;
   currency: string;
   navRefs: NavRef[];
   posReceiptNo: string | null;
@@ -220,6 +297,7 @@ export interface Booking {
   shopifyOrderName: string | null;
   idOnFile: boolean;
   idLast4?: string;
+  idPhotoAt?: string;
   contractSignedAt: string | null;
   signatureName?: string;
   signaturePending?: boolean;
@@ -247,6 +325,40 @@ export interface DashboardData {
   };
 }
 
+export interface ExtensionRequest {
+  id: string;
+  bookingRef: string;
+  customerEmail: string;
+  productName: string;
+  oldDateTo: string;
+  newDateTo: string;
+  price: number;
+  status: "REQUESTED" | "APPROVED" | "APPLIED" | "REJECTED";
+  decidedAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+export interface ExtensionRequestsResponse {
+  requests: ExtensionRequest[];
+}
+
+export type OperationPhase = "PICKUP" | "RETURN" | "CLASS" | "ON_RENT";
+export interface OperationsData {
+  date: string;
+  items: {
+    id: string; bookingId: string; ref: string; type: ProductType; phase: OperationPhase;
+    startsAt: string; endsAt: string; productName: string; qty: number;
+    customer: Customer; status: BookingStatus;
+    readiness: { paid: boolean; signed: boolean; checklistDone: number; checklistTotal: number };
+  }[];
+  attention: {
+    id: string; bookingId: string; ref: string; customer: Customer;
+    kind: string; label: string; severity: "warning" | "critical"; at: string;
+  }[];
+  summary: { pickups: number; returns: number; classes: number; onRent: number; needsAttention: number };
+}
+
 export interface Settings {
   navBaseUrl: string;
   navMode: "mock" | "live";
@@ -261,10 +373,42 @@ export interface Settings {
   dataRetentionDays: string;
   publicUrl: string;
   contractTemplate: string;
+  enabledLanguages: string;
+  zoomAccountId: string;
+  zoomClientId: string;
+  zoomUserId: string;
+  slotHoldMinutes?: string;
+  maxCustomerReschedules?: string;
+  reminderHours?: string;
+  remindersEnabled?: string;
+  reminderPickupHours?: string;
+  reminderReturnHours?: string;
+  reminderPickupSubject?: string;
+  reminderPickupTemplate?: string;
+  reminderReturnSubject?: string;
+  reminderReturnTemplate?: string;
+  cancelPolicyEnabled?: string;
+  cancelFullRefundDays?: string;
+  cancelPartialRefundDays?: string;
+  cancelPartialRefundPercent?: string;
+  pickupEarliestTime?: string;
+  returnByTime?: string;
+  rentalIncrementUnit?: "day" | "hour";
+  rentalIncrementValue?: string;
+  extensionsEnabled?: string;
+  extensionApproval?: string;
+  noShowFeeMode?: "off" | "percent" | "fixed";
+  noShowFeeValue?: string;
+  sftpHost?: string;
+  sftpPort?: string;
+  sftpUser?: string;
+  sftpPath?: string;
   /** Write-only: accepted on PUT, never returned by GET. */
   navPassword?: string;
   shopifyApiSecret?: string;
+  zoomClientSecret?: string;
   adminPassword?: string;
+  sftpPassword?: string;
 }
 
 export interface ApiOptions {
@@ -321,4 +465,20 @@ export function qs(params: Record<string, string | number | undefined | null>): 
     parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
   }
   return parts.length ? `?${parts.join("&")}` : "";
+}
+
+/**
+ * Safely copy text to clipboard, handling insecure origins where navigator.clipboard is unavailable.
+ * Returns true on success, false on failure (never throws).
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard?.writeText) {
+      return false;
+    }
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }

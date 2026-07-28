@@ -233,13 +233,13 @@ export function TenantsPage() {
         <div style={{ display: "flex", gap: 8 }}>
           <input
             type="password"
-            placeholder="New password (min 12 chars)"
+            placeholder="New password (min 8 chars)"
             value={newPw}
             onChange={(e) => setNewPw(e.target.value)}
             autoComplete="new-password"
             style={{ flex: 1 }}
           />
-          <button type="button" className="btn" disabled={newPw.length < 12} onClick={() => void changePassword()}>
+          <button type="button" className="btn" disabled={newPw.length < 8} onClick={() => void changePassword()}>
             Change
           </button>
         </div>

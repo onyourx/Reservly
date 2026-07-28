@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS stores (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,        -- NAV location code (LS Activity FixedLocation / pLocationNo)
   name TEXT NOT NULL,
-  city TEXT DEFAULT ''
+  city TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -82,6 +84,8 @@ CREATE TABLE IF NOT EXISTS products (
   min_qty INTEGER DEFAULT 1,
   max_qty INTEGER DEFAULT 10,
   shopify_product_id TEXT DEFAULT '',
+  sku TEXT DEFAULT '',
+  nav_synced_at TEXT DEFAULT '',
   updated_at TEXT NOT NULL
 );
 
@@ -98,6 +102,14 @@ CREATE TABLE IF NOT EXISTS product_prices (      -- NAV ActivityProductPrice tie
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   description TEXT NOT NULL,
   price REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_translations (
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  locale TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (product_id, locale)
 );
 
 CREATE TABLE IF NOT EXISTS product_store_qty (   -- rentable units per store
@@ -194,6 +206,50 @@ CREATE TABLE IF NOT EXISTS booking_lines (
   damages TEXT NOT NULL DEFAULT '[]'
 );
 
+CREATE TABLE IF NOT EXISTS rental_units (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  store_id TEXT REFERENCES stores(id),
+  serial_no TEXT NOT NULL DEFAULT '',
+  barcode TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'AVAILABLE', -- AVAILABLE | RESERVED | ON_RENT | SERVICE | RETIRED
+  condition TEXT NOT NULL DEFAULT 'GOOD',   -- NEW | GOOD | FAIR | DAMAGED
+  notes TEXT NOT NULL DEFAULT '',
+  usage_count INTEGER NOT NULL DEFAULT 0,
+  next_service_usage INTEGER,
+  last_service_at TEXT,
+  next_service_at TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS booking_line_units (
+  booking_line_id TEXT NOT NULL REFERENCES booking_lines(id) ON DELETE CASCADE,
+  unit_id TEXT NOT NULL REFERENCES rental_units(id),
+  assigned_at TEXT NOT NULL,
+  returned_at TEXT,
+  PRIMARY KEY (booking_line_id, unit_id)
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_logs (
+  id TEXT PRIMARY KEY,
+  unit_id TEXT NOT NULL REFERENCES rental_units(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'ROUTINE',
+  notes TEXT NOT NULL DEFAULT '',
+  usage_at_service INTEGER NOT NULL DEFAULT 0,
+  serviced_at TEXT NOT NULL,
+  next_service_usage INTEGER,
+  next_service_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rental_unit_unavailability (
+  id TEXT PRIMARY KEY,
+  unit_id TEXT NOT NULL REFERENCES rental_units(id) ON DELETE CASCADE,
+  starts_at TEXT NOT NULL,
+  ends_at TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'Maintenance',
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   booking_id TEXT,
@@ -225,14 +281,168 @@ CREATE TABLE IF NOT EXISTS audit_log (          -- access log for personal data 
   subject TEXT DEFAULT '',                       -- booking ref / customer email
   detail TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS booking_holds (
+  token TEXT PRIMARY KEY,
+  product_no TEXT NOT NULL,
+  session_id TEXT,
+  store_id TEXT,
+  date_from TEXT NOT NULL,
+  date_to TEXT NOT NULL,
+  qty INTEGER NOT NULL DEFAULT 1,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS booking_holds_expiry ON booking_holds(expires_at);
+
+CREATE TABLE IF NOT EXISTS intake_forms (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  product_id TEXT REFERENCES products(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  fields TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS product_addons (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  addon_product_no TEXT NOT NULL,
+  name TEXT NOT NULL,
+  price REAL NOT NULL DEFAULT 0,
+  max_qty INTEGER NOT NULL DEFAULT 1,
+  required INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS product_cross_sell (
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  suggested_product_no TEXT NOT NULL,
+  PRIMARY KEY (product_id, suggested_product_no)
+);
+
+CREATE TABLE IF NOT EXISTS waitlist (
+  id TEXT PRIMARY KEY,
+  product_no TEXT NOT NULL,
+  session_id TEXT,
+  store_id TEXT,
+  date_from TEXT NOT NULL DEFAULT '',
+  date_to TEXT NOT NULL DEFAULT '',
+  customer_name TEXT NOT NULL DEFAULT '',
+  customer_email TEXT NOT NULL,
+  customer_phone TEXT NOT NULL DEFAULT '',
+  qty INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'WAITING',
+  notified_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS waitlist_slot ON waitlist(product_no,session_id,store_id,status,created_at);
+
+CREATE TABLE IF NOT EXISTS availability_rules (
+  id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL, -- STORE | PRODUCT | RESOURCE
+  scope_id TEXT NOT NULL,
+  kind TEXT NOT NULL,       -- OPENING | BLACKOUT
+  weekday INTEGER,
+  starts_at TEXT NOT NULL DEFAULT '',
+  ends_at TEXT NOT NULL DEFAULT '',
+  from_time TEXT NOT NULL DEFAULT '',
+  to_time TEXT NOT NULL DEFAULT '',
+  label TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS availability_rules_scope ON availability_rules(scope_type,scope_id,kind);
+
+CREATE TABLE IF NOT EXISTS notification_jobs (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  type TEXT NOT NULL,
+  scheduled_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  sent_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notification_jobs_due ON notification_jobs(status,scheduled_at);
+
+CREATE TABLE IF NOT EXISTS booking_addons (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  addon_product_no TEXT NOT NULL,
+  name TEXT NOT NULL,
+  qty INTEGER NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  shopify_variant_id TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS extension_requests (
+  id TEXT PRIMARY KEY,
+  booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+  line_id TEXT NOT NULL,
+  old_date_to TEXT NOT NULL,
+  new_date_to TEXT NOT NULL,
+  price REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'REQUESTED', -- REQUESTED|APPROVED|REJECTED|APPLIED|EXPIRED|CANCELLED
+  shopify_draft_order_id TEXT DEFAULT '',
+  invoice_url TEXT DEFAULT '',
+  decided_at TEXT, paid_at TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS staff_users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',      -- 'owner' | 'member'
+  perms TEXT NOT NULL DEFAULT '{}',         -- JSON {products,bookings,sessions,reports,availability: boolean}
+  store_ids TEXT NOT NULL DEFAULT '*',      -- '*' or JSON array of store ids
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `);
 
   // Post-v1 columns (idempotent migrations for existing databases).
   for (const stmt of [
+    "ALTER TABLE stores ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE stores ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE booking_lines ADD COLUMN checklist TEXT NOT NULL DEFAULT '[]'",
     "ALTER TABLE bookings ADD COLUMN sign_token TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN signature_png TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN signature_name TEXT DEFAULT ''",
+    "ALTER TABLE products ADD COLUMN late_fee_per_day REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN sku TEXT DEFAULT ''",
+    "ALTER TABLE products ADD COLUMN nav_synced_at TEXT DEFAULT ''",
+    "ALTER TABLE rental_units ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE rental_units ADD COLUMN next_service_usage INTEGER",
+    "ALTER TABLE rental_units ADD COLUMN last_service_at TEXT",
+    "ALTER TABLE rental_units ADD COLUMN next_service_at TEXT",
+    "ALTER TABLE sessions ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'IN_PERSON'",
+    "ALTER TABLE sessions ADD COLUMN meeting_url TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE sessions ADD COLUMN meeting_host_url TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE sessions ADD COLUMN zoom_meeting_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE products ADD COLUMN buffer_before INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN buffer_after INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN min_notice_hours INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN max_advance_days INTEGER NOT NULL DEFAULT 365",
+    "ALTER TABLE products ADD COLUMN cancellation_hours INTEGER NOT NULL DEFAULT 24",
+    "ALTER TABLE products ADD COLUMN customer_can_cancel INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE products ADD COLUMN customer_can_reschedule INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE products ADD COLUMN deposit_policy TEXT NOT NULL DEFAULT 'PICKUP'",
+    "ALTER TABLE bookings ADD COLUMN manage_token TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN checked_in_at TEXT",
+    "ALTER TABLE bookings ADD COLUMN no_show_at TEXT",
+    "ALTER TABLE bookings ADD COLUMN no_show_fee REAL DEFAULT 0",
+    "ALTER TABLE bookings ADD COLUMN no_show_fee_status TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN no_show_draft_order_id TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN intake_responses TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE bookings ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE bookings ADD COLUMN id_photo_ref TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN id_photo_at TEXT DEFAULT ''",
+    "ALTER TABLE product_addons ADD COLUMN shopify_variant_id TEXT NOT NULL DEFAULT ''",
   ]) {
     try {
       d.exec(stmt);
@@ -240,6 +450,11 @@ CREATE TABLE IF NOT EXISTS audit_log (          -- access log for personal data 
       /* column already exists */
     }
   }
+  // Backfill the legacy bilingual fields into the extensible translation model.
+  d.exec(`INSERT OR IGNORE INTO product_translations(product_id,locale,name,description)
+          SELECT id,'en',name,web_desc_en FROM products;
+          INSERT OR IGNORE INTO product_translations(product_id,locale,name,description)
+          SELECT id,'fr',COALESCE(NULLIF(name_fr,''),name),web_desc_fr FROM products;`);
 }
 
 initSchema(defaultDb);
@@ -264,6 +479,47 @@ const SETTING_DEFAULTS: Record<string, string> = {
   adminPasswordHash: "",
   publicUrl: process.env.PUBLIC_URL || "", // base for customer-facing links (e-signature)
   contractTemplate: "",                    // custom contract HTML with {{placeholders}}; empty = built-in
+  enabledLanguages: '["en","fr"]',         // tenant catalog/customer-content languages
+  zoomAccountId: process.env.ZOOM_ACCOUNT_ID || "",
+  zoomClientId: process.env.ZOOM_CLIENT_ID || "",
+  zoomClientSecret: process.env.ZOOM_CLIENT_SECRET || "",
+  zoomUserId: process.env.ZOOM_USER_ID || "me",
+  slotHoldMinutes: "10",
+  maxCustomerReschedules: "5",
+  extensionsEnabled: "",
+  extensionApproval: "auto",
+  noShowFeeMode: "off",
+  noShowFeeValue: "0",
+  reminderHours: "[24]",
+  remindersEnabled: "",
+  reminderPickupHours: "24",
+  reminderReturnHours: "24",
+  reminderPickupSubject: "Reminder: your rental pickup at {{store}}",
+  reminderPickupTemplate: `<p>Hi {{firstName}},</p>
+<p>We're looking forward to your rental pickup at <strong>{{store}}</strong> on <strong>{{date}}</strong> at <strong>{{time}}</strong>.</p>
+<p>Your reservation: <strong>{{ref}}</strong></p>
+<p>Items: {{items}}</p>
+<p>See you soon!</p>`,
+  reminderReturnSubject: "Reminder: your rental return to {{store}}",
+  reminderReturnTemplate: `<p>Hi {{firstName}},</p>
+<p>This is a reminder to return your rental to <strong>{{store}}</strong> on <strong>{{date}}</strong> at <strong>{{time}}</strong>.</p>
+<p>Your reservation: <strong>{{ref}}</strong></p>
+<p>Items: {{items}}</p>
+<p>Thank you!</p>`,
+  cancelPolicyEnabled: "",
+  cancelFullRefundDays: "7",
+  cancelPartialRefundDays: "2",
+  cancelPartialRefundPercent: "50",
+  pickupEarliestTime: "",
+  returnByTime: "",
+  rentalIncrementUnit: "day",
+  rentalIncrementValue: "1",
+  sftpHost: "",
+  sftpPort: "22",
+  sftpUser: "",
+  sftpPassword: "",
+  sftpPasswordEnc: "",
+  sftpPath: "/reservly-ids",
 };
 
 export function getSettings(): Record<string, string> {

@@ -1,15 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api } from "../api";
-import type { Booking, DamageRow } from "../api";
-import { fmtDateTime, money } from "../format";
+import { api, copyToClipboard } from "../api";
+import type { Booking, DamageRow, ExtensionRequest, ExtensionRequestsResponse, RentalUnit } from "../api";
+import { fmtDate, fmtDateTime, money } from "../format";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { StatusPill } from "../components/StatusPill";
 import { Modal } from "../components/Modal";
 import { EmptyState, ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
+import { ScanButton } from "../components/BarcodeScanner";
+import { useI18n } from "../components/I18n";
+import { useAuth } from "../components/AuthGate";
 
 type ModalKind = "pickup" | "return" | "cancel" | "reconcile" | null;
+type RefundQuote = {
+  enabled: boolean;
+  daysBefore: number;
+  percent: number;
+  amount: number;
+  tier: "full" | "partial" | "none";
+  bookingRef: string;
+};
 
 /** Event detail arrives as a JSON object from the server; render it as `k: v` pairs. */
 function formatEventDetail(detail: unknown): string {
@@ -24,13 +35,26 @@ function formatEventDetail(detail: unknown): string {
 export function BookingDetail() {
   const { id = "" } = useParams();
   const toast = useToast();
+  const { t } = useI18n();
   const { storeName } = useStores();
+  const auth = useAuth();
 
   const [booking, setBooking] = useState<Booking | null>(null);
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalKind>(null);
   const [acting, setActing] = useState<string | null>(null);
+  const [extensionRequests, setExtensionRequests] = useState<ExtensionRequest[]>([]);
+  const [extensionsLoading, setExtensionsLoading] = useState(true);
+  const [rejectingExtensionId, setRejectingExtensionId] = useState<string | null>(null);
+  const [extensionRejectReason, setExtensionRejectReason] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const photoFileRef = useRef<HTMLInputElement>(null);
+  const [sftpConfigured, setSftpConfigured] = useState(false);
+  const [shopifyConfigured, setShopifyConfigured] = useState(false);
+  const [noShowSettings, setNoShowSettings] = useState({ mode: "off", value: 0 });
+  const [confirmWaive, setConfirmWaive] = useState(false);
 
   // Modal form state
   const [idNumber, setIdNumber] = useState("");
@@ -38,8 +62,12 @@ export function BookingDetail() {
   const [inspection, setInspection] = useState("");
   const [damages, setDamages] = useState<DamageRow[]>([]);
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelQuote, setCancelQuote] = useState<RefundQuote | null>(null);
   const [posTotal, setPosTotal] = useState("");
   const [receiptNo, setReceiptNo] = useState("");
+  const [availableUnits, setAvailableUnits] = useState<Record<string, RentalUnit[]>>({});
+  const [unitAssignments, setUnitAssignments] = useState<Record<string, string[]>>({});
+  const [unitConditions, setUnitConditions] = useState<Record<string, string>>({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -51,12 +79,76 @@ export function BookingDetail() {
   }, [id]);
 
   useEffect(load, [load]);
+  useEffect(() => {
+    api<{ sftpConfigured: boolean; shopifyConfigured: boolean }>("/api/health")
+      .then((health) => {
+        setSftpConfigured(health.sftpConfigured);
+        setShopifyConfigured(health.shopifyConfigured);
+      })
+      .catch(() => setSftpConfigured(false));
+    api<{ settings: { noShowFeeMode?: string; noShowFeeValue?: string } }>("/api/settings")
+      .then(({ settings }) => setNoShowSettings({
+        mode: settings.noShowFeeMode || "off",
+        value: Number(settings.noShowFeeValue) || 0,
+      }))
+      .catch(() => setNoShowSettings({ mode: "off", value: 0 }));
+  }, []);
+
+  const loadExtensions = useCallback(async () => {
+    setExtensionsLoading(true);
+    try {
+      const result = await api<ExtensionRequestsResponse>("/api/extension-requests");
+      setExtensionRequests(result.requests);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("Extension requests"));
+      setExtensionRequests([]);
+    } finally {
+      setExtensionsLoading(false);
+    }
+  // The request endpoint is independent of locale and booking state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    void loadExtensions();
+  }, [loadExtensions]);
+
+  const approveExtension = async (requestId: string) => {
+    setActing(`extension-${requestId}`);
+    try {
+      await api<{ ok: boolean }>(`/api/extension-requests/${requestId}/approve`, { method: "POST", body: {} });
+      toast.success(t("Approved"));
+      await loadExtensions();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("Approve"));
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const rejectExtension = async (requestId: string) => {
+    setActing(`extension-${requestId}`);
+    try {
+      await api<{ ok: boolean }>(`/api/extension-requests/${requestId}/reject`, {
+        method: "POST",
+        body: { reason: extensionRejectReason || undefined },
+      });
+      toast.success(t("Rejected"));
+      setRejectingExtensionId(null);
+      setExtensionRejectReason("");
+      await loadExtensions();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("Reject"));
+    } finally {
+      setActing(null);
+    }
+  };
 
   const act = async (name: string, path: string, body?: unknown) => {
     setActing(name);
     try {
-      await api(`/api/bookings/${id}/${path}`, { method: "POST", body: body ?? {} });
-      toast.success(`${name} done`);
+      const result = await api<{ lateFeeSuggested?: number }>(`/api/bookings/${id}/${path}`, { method: "POST", body: body ?? {} });
+      toast.success(result.lateFeeSuggested ? `${name} done · suggested late fee ${money(result.lateFeeSuggested)}` : `${name} done`);
       setModal(null);
       load();
     } catch (e) {
@@ -66,12 +158,50 @@ export function BookingDetail() {
     }
   };
 
+  const markNoShow = async () => {
+    if (!booking) return;
+    if (noShowSettings.mode !== "off" && noShowSettings.value > 0) {
+      const amount = noShowSettings.mode === "percent"
+        ? Math.round(booking.total * (noShowSettings.value / 100) * 100) / 100
+        : noShowSettings.value;
+      const message = t(shopifyConfigured
+        ? "A no-show fee of $X will be invoiced"
+        : "A no-show fee of $X will be charged (payable at the store)")
+        .replace("$X", `$${amount.toFixed(2)}`);
+      if (!window.confirm(message)) return;
+    }
+    await act("No-show", "no-show");
+  };
+
+  const waiveNoShowFee = async () => {
+    if (!confirmWaive) {
+      setConfirmWaive(true);
+      return;
+    }
+    setActing("waive-no-show-fee");
+    try {
+      const result = await api<{ booking: Booking }>(`/api/bookings/${id}/waive-no-show-fee`, { method: "POST" });
+      setBooking(result.booking);
+      setConfirmWaive(false);
+      toast.success(t("Fee waived"));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t("Waive fee"));
+    } finally {
+      setActing(null);
+    }
+  };
+
   const requestSignature = async () => {
     setActing("signature");
     try {
       const d = await api<{ url: string }>(`/api/bookings/${id}/request-signature`, { method: "POST" });
-      await navigator.clipboard.writeText(d.url).catch(() => {});
-      toast.success("Signing link created & copied — emailed to the customer via HubSpot, or text/show it directly");
+      const copied = await copyToClipboard(d.url);
+      setSignatureUrl(d.url);
+      toast.success(
+        copied
+          ? "Signing link created & copied — emailed to the customer via HubSpot"
+          : "Signing link created — emailed to the customer via HubSpot. Manual copy available below.",
+      );
       load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not create signing link");
@@ -124,15 +254,28 @@ export function BookingDetail() {
     setIdNumber("");
     setDepositAmount(String(b.deposit ?? ""));
     setInspection("");
+    setUnitAssignments({});
+    const rentalLines = b.lines.filter((l) => l.type === "RENTAL" && !l.units.length);
+    Promise.all(rentalLines.map(async (line) => {
+      const d = await api<{ units: RentalUnit[] }>(`/api/rental-units?productNo=${encodeURIComponent(line.productNo)}&storeId=${encodeURIComponent(line.storeId)}&status=AVAILABLE`);
+      return [line.id, d.units] as const;
+    })).then((rows) => setAvailableUnits(Object.fromEntries(rows))).catch(() => setAvailableUnits({}));
     setModal("pickup");
   };
   const openReturn = () => {
     setInspection("");
     setDamages([]);
+    setUnitConditions(Object.fromEntries(b.lines.flatMap((l) => l.units.map((u) => [u.id, u.condition]))));
     setModal("return");
   };
-  const openCancel = () => {
+  const openCancel = async () => {
     setCancelReason("");
+    setCancelQuote(null);
+    try {
+      setCancelQuote(await api<RefundQuote>(`/api/bookings/${id}/refund-quote`));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not load refund quote");
+    }
     setModal("cancel");
   };
   const openReconcile = () => {
@@ -142,6 +285,13 @@ export function BookingDetail() {
   };
 
   const events = [...b.events].sort((a, c) => (a.at < c.at ? 1 : -1));
+  const bookingExtensionRequests = extensionRequests.filter((request) => request.bookingRef === b.ref);
+  const extensionStatusStyles: Record<ExtensionRequest["status"], React.CSSProperties> = {
+    REQUESTED: { background: "#fef3c7", color: "#92400e" },
+    APPROVED: { background: "#dbeafe", color: "#1e40af" },
+    APPLIED: { background: "#dcfce7", color: "#166534" },
+    REJECTED: { background: "#fee2e2", color: "#991b1b" },
+  };
 
   return (
     <div className="page">
@@ -185,6 +335,104 @@ export function BookingDetail() {
               <div className="meta-item">
                 <span className="meta-label">ID</span>
                 <span className="badge">On file</span>
+              </div>
+            )}
+            <div className="meta-item">
+              <span className="meta-label">{t("ID photo")}</span>
+              {b.idPhotoAt ? (
+                <span>
+                  {t("Captured")} {fmtDateTime(b.idPhotoAt)}{" "}
+                  <button className="link-btn" onClick={() => window.open(`/api/bookings/${b.id}/id-photo`, "_blank")}>
+                    {t("View")}
+                  </button>
+                  {auth.access?.canManageUsers && (
+                    <button className="link-btn" onClick={() => {
+                      if (confirm(t("Remove ID photo?")) && confirm(`${t("Remove ID photo?")} ${t("Remove")}`)) {
+                        api(`/api/bookings/${b.id}/id-photo`, { method: "DELETE" })
+                          .then(() => { toast.success(t("ID photo removed")); load(); })
+                          .catch((e) => toast.error(e instanceof Error ? e.message : t("Remove failed")));
+                      }
+                    }}>
+                      {t("Remove")}
+                    </button>
+                  )}
+                </span>
+              ) : sftpConfigured ? (
+                <>
+                  <input
+                    ref={photoFileRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => {
+                      const input = e.currentTarget;
+                      const file = input.files?.[0];
+                      if (!file) return;
+                      setUploading(true);
+                      file.arrayBuffer()
+                        .then((buffer) => fetch(`/api/bookings/${b.id}/id-photo`, {
+                          method: "POST",
+                          body: buffer,
+                          headers: { "content-type": file.type || "image/jpeg" },
+                        }))
+                        .then(async (response) => {
+                          const result = await response.json() as { ok?: boolean; error?: string };
+                          if (!response.ok || !result.ok) throw new Error(result.error || "Upload failed");
+                          toast.success(t("Upload ID photo"));
+                          load();
+                        })
+                        .catch((err) => toast.error(err instanceof Error ? err.message : t("Upload failed")))
+                        .finally(() => {
+                          setUploading(false);
+                          input.value = "";
+                        });
+                    }}
+                    style={{ display: "none" }}
+                  />
+                  <button type="button" className="btn btn-sm" onClick={() => photoFileRef.current?.click()} disabled={uploading}>
+                    {uploading && <Spinner small />} {t("Upload ID photo")}
+                  </button>
+                </>
+              ) : (
+                <span className="faint">{t("SFTP not configured")}</span>
+              )}
+            </div>
+            {b.checkedInAt && (
+              <div className="meta-item">
+                <span className="meta-label">Attendance</span>
+                <span className="badge">Checked in</span>
+              </div>
+            )}
+            {b.noShowAt && (
+              <div className="meta-item">
+                <span className="meta-label">Attendance</span>
+                <span className="badge">No-show</span>
+              </div>
+            )}
+            {b.noShowAt && Number(b.noShowFee) > 0 && (
+              <div className="meta-item">
+                <span className="meta-label">{t("No-show fee status")}</span>
+                <span>
+                  {money(Number(b.noShowFee))}{" "}
+                  <span className="badge">
+                    {t(b.noShowFeeStatus === "PENDING_PAYMENT" ? "Payable at store"
+                      : b.noShowFeeStatus === "INVOICED" ? "Invoiced"
+                        : b.noShowFeeStatus === "PAID" ? "Paid"
+                          : b.noShowFeeStatus === "WAIVED" ? "Waived" : b.noShowFeeStatus || "Pending payment")}
+                  </span>
+                  {auth.access?.canManageUsers && b.noShowFeeStatus !== "PAID" && b.noShowFeeStatus !== "WAIVED" && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={acting !== null}
+                      onClick={() => void waiveNoShowFee()}
+                      onBlur={() => setConfirmWaive(false)}
+                      style={{ marginLeft: 8 }}
+                    >
+                      {t(confirmWaive ? "Confirm waive" : "Waive fee")}
+                    </button>
+                  )}
+                </span>
               </div>
             )}
             {(b.contractSignedAt || b.signaturePending) && (
@@ -234,6 +482,18 @@ export function BookingDetail() {
               {acting === "Complete" && <Spinner small />} Complete
             </button>
           )}
+          {hasCourses && active && !b.checkedInAt && !b.noShowAt && (
+            <>
+              <button type="button" className="btn" disabled={acting !== null}
+                onClick={() => void act("Check-in", "check-in")}>
+                Check in
+              </button>
+              <button type="button" className="btn" disabled={acting !== null}
+                onClick={() => void markNoShow()}>
+                Mark no-show
+              </button>
+            </>
+          )}
           {active && (
             <button type="button" className="btn btn-danger" onClick={openCancel}>
               Cancel
@@ -262,14 +522,14 @@ export function BookingDetail() {
           </a>
         )}
         {hasCourses && (
-          <a
-            className="btn btn-sm"
-            href={`/print/confirmation/${b.id}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            Print confirmation
-          </a>
+          <>
+            <a className="btn btn-sm" href={`/print/confirmation/${b.id}`} target="_blank" rel="noreferrer">
+              Print confirmation
+            </a>
+            <a className="btn btn-sm" href={`/print/ticket/${b.id}`} target="_blank" rel="noreferrer">
+              eTicket
+            </a>
+          </>
         )}
         {hasRentals && active && !b.contractSignedAt && (
           <button
@@ -282,6 +542,41 @@ export function BookingDetail() {
           </button>
         )}
       </div>
+
+      {signatureUrl && (
+        <div className="card" style={{ marginBottom: 18 }}>
+          <h2 className="card-title">{t("Signing link")}</h2>
+          <div className="faint" style={{ marginBottom: 10 }}>
+            {t("Share or manually copy this link with the customer")}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="text"
+              readOnly
+              value={signatureUrl}
+              style={{ flex: 1 }}
+            />
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                copyToClipboard(signatureUrl).then((copied) => {
+                  toast.success(copied ? "Link copied" : t("Could not copy to clipboard"));
+                });
+              }}
+            >
+              {t("Copy")}
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setSignatureUrl(null)}
+            >
+              {t("Close")}
+            </button>
+          </div>
+        </div>
+      )}
 
       {hasRentals && active && (
         <div className="card" style={{ marginBottom: 18 }}>
@@ -418,6 +713,30 @@ export function BookingDetail() {
               <div>{b.notes}</div>
             </>
           )}
+          {b.addons && b.addons.length > 0 && (
+            <>
+              <hr className="divider" />
+              <div className="faint">Booking add-ons</div>
+              {b.addons.map((a, i) => (
+                <div className="fin-row" key={`${a.productNo}-${i}`}>
+                  <span>{a.name} <span className="faint">× {a.qty}</span></span>
+                  <span>{money(a.unitPrice * a.qty)}</span>
+                </div>
+              ))}
+            </>
+          )}
+          {hasRentals && b.lines.some((l) => l.units.length > 0) && (
+            <>
+              <hr className="divider" />
+              <div className="faint">Assigned rental units</div>
+              {b.lines.flatMap((l) => l.units).map((u) => (
+                <div className="fin-row" key={u.id}>
+                  <span className="mono">{u.barcode}</span>
+                  <span>{u.serialNo || "No serial"} · {u.condition}</span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         <div className="card">
@@ -434,6 +753,58 @@ export function BookingDetail() {
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+
+        <div className="card">
+          <h2 className="card-title">{t("Extension requests")}</h2>
+          {extensionsLoading ? (
+            <Skeleton rows={3} />
+          ) : bookingExtensionRequests.length === 0 ? (
+            <EmptyState title={t("No extension requests")} />
+          ) : (
+            bookingExtensionRequests.map((request) => (
+              <div className="dash-item" key={request.id}>
+                <div className="dash-item-main">
+                  <div className="dash-item-title">
+                    <span className="badge" style={extensionStatusStyles[request.status]}>
+                      {t(request.status.charAt(0) + request.status.slice(1).toLowerCase())}
+                    </span>
+                    {" "}
+                    {fmtDate(request.oldDateTo)} → {fmtDate(request.newDateTo)}
+                  </div>
+                  <div className="faint">{money(request.price)}</div>
+                  {rejectingExtensionId === request.id && (
+                    <div style={{ marginTop: 8 }}>
+                      <textarea
+                        aria-label={t("Reason (optional)")}
+                        placeholder={t("Reason (optional)")}
+                        value={extensionRejectReason}
+                        onChange={(event) => setExtensionRejectReason(event.target.value)}
+                      />
+                      <div className="btn-row" style={{ marginTop: 6 }}>
+                        <button type="button" className="btn btn-danger btn-sm" disabled={acting !== null} onClick={() => void rejectExtension(request.id)}>
+                          {t("Confirm Reject")}
+                        </button>
+                        <button type="button" className="btn btn-sm" onClick={() => { setRejectingExtensionId(null); setExtensionRejectReason(""); }}>
+                          {t("Cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {request.status === "REQUESTED" && rejectingExtensionId !== request.id && (
+                  <div className="btn-row">
+                    <button type="button" className="btn btn-primary btn-sm" disabled={acting !== null} onClick={() => void approveExtension(request.id)}>
+                      {t("Approve")}
+                    </button>
+                    <button type="button" className="btn btn-danger btn-sm" disabled={acting !== null} onClick={() => { setRejectingExtensionId(request.id); setExtensionRejectReason(""); }}>
+                      {t("Reject")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
           )}
         </div>
       </div>
@@ -458,6 +829,7 @@ export function BookingDetail() {
                     idNumber: idNumber || undefined,
                     depositAmount: depositAmount === "" ? undefined : Number(depositAmount),
                     inspection: inspection || undefined,
+                    unitAssignments,
                   })
                 }
               >
@@ -508,6 +880,55 @@ export function BookingDetail() {
               placeholder="Condition of equipment at pickup…"
             />
           </Field>
+          {b.lines.filter((l) => l.type === "RENTAL" && !l.units.length).map((line) => (
+            <div key={line.id}>
+              <div className="field-label">Assign {line.productName} units ({line.qty})</div>
+              <div className="field-hint" style={{ marginBottom: 6 }}>{t("Scan a barcode or select each physical unit.")}</div>
+              <div style={{ marginBottom: 8 }}>
+                <ScanButton title={t("Scan unit barcode or serial number")} onScan={(rawCode) => {
+                  const code = rawCode.trim().toLowerCase();
+                  const unit = (availableUnits[line.id] || []).find((candidate) =>
+                    candidate.barcode.toLowerCase() === code || candidate.serialNo?.toLowerCase() === code
+                  );
+                  if (!unit) {
+                    toast.error(t("No available unit matches {code}").replace("{code}", rawCode.trim()));
+                    return;
+                  }
+                  const assigned = unitAssignments[line.id] || [];
+                  if (assigned.includes(unit.id)) {
+                    toast.error(t("Unit already assigned"));
+                    return;
+                  }
+                  if (assigned.filter(Boolean).length >= line.qty) {
+                    toast.error(t("All units are already assigned"));
+                    return;
+                  }
+                  const next = [...assigned];
+                  const openIndex = Array.from({ length: line.qty }, (_, index) => index)
+                    .find((index) => !next[index]);
+                  if (openIndex === undefined) return;
+                  next[openIndex] = unit.id;
+                  setUnitAssignments((current) => ({ ...current, [line.id]: next }));
+                  toast.success(t("Unit {barcode} assigned").replace("{barcode}", unit.barcode));
+                }} />
+              </div>
+              {Array.from({ length: line.qty }, (_, index) => (
+                <select key={index} value={unitAssignments[line.id]?.[index] || ""} onChange={(e) => {
+                  const next = [...(unitAssignments[line.id] || Array(line.qty).fill(""))];
+                  next[index] = e.target.value;
+                  setUnitAssignments({ ...unitAssignments, [line.id]: next });
+                }} style={{ marginBottom: 6 }}>
+                  <option value="">Unit {index + 1}…</option>
+                  {(availableUnits[line.id] || []).map((u) => (
+                    <option key={u.id} value={u.id} disabled={(unitAssignments[line.id] || []).includes(u.id) && unitAssignments[line.id]?.[index] !== u.id}>
+                      {u.barcode}{u.serialNo ? ` · ${u.serialNo}` : ""} · {u.condition}
+                    </option>
+                  ))}
+                </select>
+              ))}
+              {(availableUnits[line.id] || []).length < line.qty && <div className="avail-no">Not enough serialized units available. Add units in Rental fleet.</div>}
+            </div>
+          ))}
         </Modal>
       )}
 
@@ -529,6 +950,7 @@ export function BookingDetail() {
                   void act("Return", "return", {
                     inspection: inspection || undefined,
                     damages: damages.filter((d) => d.itemNo || d.note || d.charge),
+                    unitConditions,
                   })
                 }
               >
@@ -544,6 +966,13 @@ export function BookingDetail() {
               placeholder="Condition of equipment at return…"
             />
           </Field>
+          {b.lines.flatMap((l) => l.units).filter((u) => !u.returnedAt).map((u) => (
+            <Field key={u.id} label={`Condition · ${u.barcode}`} hint={u.serialNo || undefined}>
+              <select value={unitConditions[u.id] || "GOOD"} onChange={(e) => setUnitConditions({ ...unitConditions, [u.id]: e.target.value })}>
+                {["NEW", "GOOD", "FAIR", "DAMAGED"].map((x) => <option key={x}>{x}</option>)}
+              </select>
+            </Field>
+          ))}
           <div>
             <div className="field-label" style={{ marginBottom: 8 }}>
               Damages
@@ -631,6 +1060,13 @@ export function BookingDetail() {
             This cancels the NAV reservation for <strong className="mono">{b.ref}</strong>. This
             cannot be undone.
           </p>
+          {cancelQuote?.enabled && (
+            <p style={{ margin: 0, fontWeight: 650 }}>
+              {cancelQuote.tier === "none"
+                ? "No refund per policy"
+                : `Refund: $${cancelQuote.amount.toFixed(2)} (${cancelQuote.percent}%)`}
+            </p>
+          )}
           <Field label="Reason">
             <textarea
               value={cancelReason}

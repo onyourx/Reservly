@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Request, Response, NextFunction } from "express";
 import { tenantALS, initSchema, DEFAULT_TENANT_SLUG, now, uid } from "../db.js";
+import { getStaffSession, staffTokenOf } from "./staffSessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.BOOKING_DATA_DIR || path.join(__dirname, "..", "..");
@@ -28,6 +29,13 @@ CREATE TABLE IF NOT EXISTS platform_users (
   email TEXT PRIMARY KEY,
   role TEXT NOT NULL DEFAULT 'superadmin',
   password_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 `);
@@ -100,6 +108,8 @@ export function createTenant(slug: string, name: string): TenantRow {
 
 const adminSessions = new Map<string, { email: string; tenantSlug: string | null; expiresAt: number }>();
 const ADMIN_TTL_MS = 12 * 60 * 60 * 1000;
+const RESET_TTL_MS = 30 * 60 * 1000;
+const resetRateLimit = new Map<string, number>(); // email -> last request epoch ms
 
 function adminToken(req: Request): string {
   const m = /(?:^|;\s*)bd_admin=([^;]+)/.exec(String(req.headers.cookie ?? ""));
@@ -111,16 +121,25 @@ export function adminSession(req: Request) {
   return s && s.expiresAt > Date.now() ? s : null;
 }
 
-export function adminLogin(req: Request, res: Response) {
-  const { email, password } = req.body ?? {};
-  const user = platformDb.prepare("SELECT * FROM platform_users WHERE email = ?").get(String(email ?? "").toLowerCase().trim()) as any;
-  if (!user || !verifyPassword(String(password ?? ""), user.password_hash)) {
-    return res.status(401).json({ error: "Invalid email or password" });
-  }
+export function verifyPlatformLogin(email: string, pw: string): any {
+  const user = platformDb.prepare("SELECT * FROM platform_users WHERE email = ?").get(email.toLowerCase().trim()) as any;
+  return user && verifyPassword(pw, user.password_hash) ? user : null;
+}
+
+export function issueAdminSession(res: Response, email: string): void {
   const token = crypto.randomBytes(24).toString("base64url");
-  adminSessions.set(token, { email: user.email, tenantSlug: null, expiresAt: Date.now() + ADMIN_TTL_MS });
+  adminSessions.set(token, { email, tenantSlug: null, expiresAt: Date.now() + ADMIN_TTL_MS });
   for (const [t, s] of adminSessions) if (s.expiresAt < Date.now()) adminSessions.delete(t);
   res.setHeader("Set-Cookie", `bd_admin=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${ADMIN_TTL_MS / 1000}`);
+}
+
+export function adminLogin(req: Request, res: Response) {
+  const { email, password } = req.body ?? {};
+  const user = verifyPlatformLogin(String(email ?? ""), String(password ?? ""));
+  if (!user) {
+    return res.status(401).json({ error: "Invalid email or password" });
+  }
+  issueAdminSession(res, user.email);
   res.json({ ok: true, email: user.email });
 }
 
@@ -130,11 +149,78 @@ export function adminLogout(req: Request, res: Response) {
   res.json({ ok: true });
 }
 
+export function createPasswordReset(email: string): string | null {
+  // Normalize email
+  email = email.trim().toLowerCase();
+
+  // Check if user exists
+  const user = platformDb.prepare("SELECT * FROM platform_users WHERE email = ?").get(email) as any;
+  if (!user) return null;
+
+  // Rate limit: 60s minimum between requests
+  const nowEpoch = Date.now();
+  const lastRequest = resetRateLimit.get(email);
+  if (lastRequest && nowEpoch - lastRequest < 60 * 1000) return null;
+
+  // Update rate limit map
+  resetRateLimit.set(email, nowEpoch);
+
+  // Delete previous unused tokens
+  platformDb.prepare("DELETE FROM password_resets WHERE email = ? AND used = 0").run(email);
+
+  // Generate token
+  const token = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+  // Store token
+  platformDb.prepare(
+    "INSERT INTO password_resets (token_hash, email, expires_at, used, created_at) VALUES (?, ?, ?, 0, ?)"
+  ).run(tokenHash, email, nowEpoch + RESET_TTL_MS, now());
+
+  return token;
+}
+
+export function consumePasswordReset(
+  token: string,
+  newPassword: string
+): { ok: true; email: string } | { ok: false; error: string } {
+  // Validate password length
+  if (newPassword.length < 8) {
+    return { ok: false, error: "Password must be at least 8 characters" };
+  }
+
+  // Check token
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const reset = platformDb.prepare(
+    "SELECT * FROM password_resets WHERE token_hash = ?"
+  ).get(tokenHash) as any;
+
+  if (!reset || reset.used || reset.expires_at < Date.now()) {
+    return { ok: false, error: "Reset link is invalid or has expired" };
+  }
+
+  // Update password
+  platformDb.prepare("UPDATE platform_users SET password_hash = ? WHERE email = ?")
+    .run(hashPassword(newPassword), reset.email);
+
+  // Mark token as used
+  platformDb.prepare("UPDATE password_resets SET used = 1 WHERE token_hash = ?").run(tokenHash);
+
+  // Force logout all sessions for this email
+  for (const [token, session] of adminSessions) {
+    if (session.email === reset.email) {
+      adminSessions.delete(token);
+    }
+  }
+
+  return { ok: true, email: reset.email };
+}
+
 export function adminChangePassword(req: Request, res: Response) {
   const session = adminSession(req);
   if (!session) return res.status(401).json({ error: "auth_required" });
   const pw = String(req.body?.password ?? "");
-  if (pw.length < 12) return res.status(400).json({ error: "Password must be at least 12 characters" });
+  if (pw.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters" });
   platformDb.prepare("UPDATE platform_users SET password_hash = ? WHERE email = ?").run(hashPassword(pw), session.email);
   res.json({ ok: true });
 }
@@ -149,15 +235,30 @@ export function requireSuperadmin(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-/** Request middleware: pick the tenant DB for this request.
- *  Priority: super-admin's selected tenant → x-tenant header / ?t= (public
- *  surfaces like signing links) → default tenant. */
+/** Request middleware: pick the tenant DB for this request. */
 export function tenantMiddleware(req: Request, res: Response, next: NextFunction) {
-  const fromAdmin = adminSession(req)?.tenantSlug;
+  const adminTenant = adminSession(req)?.tenantSlug;
+  if (adminTenant) {
+    // super admin has selected a specific tenant
+    const d = openTenantDb(adminTenant);
+    if (!d) return res.status(404).json({ error: `Unknown or inactive tenant '${adminTenant}'` });
+    return tenantALS.run({ slug: adminTenant, db: d }, next);
+  }
+
+  const staffSession = getStaffSession(staffTokenOf(req));
+  const staffTenant = staffSession && staffSession.expiresAt > Date.now() ? staffSession.tenantSlug : null;
+  if (staffTenant) {
+    const d = openTenantDb(staffTenant);
+    if (d) return tenantALS.run({ slug: staffTenant, db: d }, next);
+    // staff session references unknown/inactive tenant: fall through to default
+  }
+
   const fromHeader = String(req.headers["x-tenant"] ?? "") || String(req.query.t ?? "");
-  const slug = fromAdmin || fromHeader || DEFAULT_TENANT_SLUG;
-  if (slug === DEFAULT_TENANT_SLUG) return tenantALS.run({ slug, db: openTenantDb(slug)! }, next);
-  const d = openTenantDb(slug);
-  if (!d) return res.status(404).json({ error: `Unknown or inactive tenant '${slug}'` });
-  tenantALS.run({ slug, db: d }, next);
+  if (fromHeader) {
+    const d = openTenantDb(fromHeader);
+    if (!d) return res.status(404).json({ error: `Unknown or inactive tenant '${fromHeader}'` });
+    return tenantALS.run({ slug: fromHeader, db: d }, next);
+  }
+
+  return tenantALS.run({ slug: DEFAULT_TENANT_SLUG, db: openTenantDb(DEFAULT_TENANT_SLUG)! }, next);
 }

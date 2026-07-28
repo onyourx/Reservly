@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Reset the platform super-admin password (local server access = platform trust).
-// Usage: node scripts/set-platform-password.mjs 'new-password-min-12-chars'
+// Usage: node scripts/set-platform-password.mjs 'new-password-min-8-chars'
 import Database from "better-sqlite3";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pw = process.argv[2];
-if (!pw || pw.length < 12) {
-  console.error("Usage: node scripts/set-platform-password.mjs '<password, min 12 chars>'");
+if (!pw || pw.length < 8) {
+  console.error("Usage: node scripts/set-platform-password.mjs '<password, min 8 chars>'");
   process.exit(1);
 }
 const dir = path.dirname(fileURLToPath(import.meta.url));
