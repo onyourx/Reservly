@@ -412,9 +412,6 @@ export function SettingsPage() {
       <div className="card">
         <h2 className="card-title">Staff access &amp; privacy</h2>
         {fields(<>
-          <Field label="Staff password (min 8 chars, write-only)" hint="Once set, the whole app and print pages require sign-in. Logins and personal-data access are audited.">
-            <input type="password" value={settings.adminPassword ?? ""} onChange={(e) => set("adminPassword", e.target.value)} autoComplete="new-password" />
-          </Field>
           <Field label="ID retention (days after booking closes)"><input type="number" min={1} value={settings.idRetentionDays} onChange={(e) => set("idRetentionDays", e.target.value)} /></Field>
           <Field label="Booking data retention (days)" hint="Older completed/cancelled bookings are anonymized; totals are kept.">
             <input type="number" min={30} value={settings.dataRetentionDays} onChange={(e) => set("dataRetentionDays", e.target.value)} />

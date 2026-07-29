@@ -694,6 +694,23 @@ textarea {
 .session-chip.full {
   opacity: 0.6;
 }
+.session-chip-hint {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+.calendar-filter-heading {
+  margin: -8px 0 12px;
+  font-size: 12px;
+}
 .calendar-legend { display: flex; gap: 16px; margin-top: 10px; font-size: 11px; color: var(--text-soft); }
 .calendar-legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 5px; }
 .calendar-legend .open::before { background: var(--ok-soft); border: 1px solid #a9d9c2; }

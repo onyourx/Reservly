@@ -21,13 +21,15 @@ const RETURN_TEMPLATE = `<p>Hi {{firstName}},</p>
 const PLACEHOLDERS = "Placeholders: {{firstName}}, {{lastName}}, {{ref}}, {{store}}, {{date}}, {{time}}, {{items}}";
 
 type ReminderSettings = Required<Pick<Settings,
-  "remindersEnabled" | "reminderPickupHours" | "reminderReturnHours" |
+  "reminderPickupEnabled" | "reminderReturnEnabled" |
+  "reminderPickupHours" | "reminderReturnHours" |
   "reminderPickupSubject" | "reminderPickupTemplate" |
   "reminderReturnSubject" | "reminderReturnTemplate"
 >>;
 
 const DEFAULTS: ReminderSettings = {
-  remindersEnabled: "",
+  reminderPickupEnabled: "0",
+  reminderReturnEnabled: "0",
   reminderPickupHours: "24",
   reminderReturnHours: "24",
   reminderPickupSubject: PICKUP_SUBJECT,
@@ -36,8 +38,12 @@ const DEFAULTS: ReminderSettings = {
   reminderReturnTemplate: RETURN_TEMPLATE,
 };
 
+const resolvedEnabled = (newValue: string | undefined, legacyValue: string | undefined) =>
+  newValue === "1" || ((newValue ?? "") === "" && legacyValue === "1") ? "1" : "0";
+
 const reminderSettings = (loaded: Partial<Settings>): ReminderSettings => ({
-  remindersEnabled: loaded.remindersEnabled || "",
+  reminderPickupEnabled: resolvedEnabled(loaded.reminderPickupEnabled, loaded.remindersEnabled),
+  reminderReturnEnabled: resolvedEnabled(loaded.reminderReturnEnabled, loaded.remindersEnabled),
   reminderPickupHours: loaded.reminderPickupHours || DEFAULTS.reminderPickupHours,
   reminderReturnHours: loaded.reminderReturnHours || DEFAULTS.reminderReturnHours,
   reminderPickupSubject: loaded.reminderPickupSubject || DEFAULTS.reminderPickupSubject,
@@ -53,7 +59,8 @@ export function Reminders() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const enabled = settings.remindersEnabled === "1";
+  const pickupEnabled = settings.reminderPickupEnabled === "1";
+  const returnEnabled = settings.reminderReturnEnabled === "1";
 
   const load = useCallback(() => {
     setLoading(true); setError(null);
@@ -70,9 +77,14 @@ export function Reminders() {
   const save = async () => {
     setSaving(true);
     try {
+      const values = {
+        ...settings,
+        reminderPickupEnabled: pickupEnabled ? "1" : "0",
+        reminderReturnEnabled: returnEnabled ? "1" : "0",
+      };
       const { settings: saved } = await api<{ settings: Partial<Settings> }>("/api/settings", {
         method: "PUT",
-        body: settings,
+        body: values,
       });
       setSettings(reminderSettings(saved));
       toast.success("Settings saved");
@@ -83,36 +95,38 @@ export function Reminders() {
 
   return <div className="page">
     <div className="page-head">
-      <div><h1>{t("Reservation reminders")}</h1><div className="page-sub">{t("Send reminder emails to customers before pickup and return")}</div></div>
+      <div><h1>{t("Reservation reminders")}</h1><div className="page-sub">{t("Configure pickup and return reminder emails independently")}</div></div>
       <button type="button" className="btn btn-primary" disabled={saving || loading} onClick={() => void save()}>{saving && <Spinner small />} {t("Save")}</button>
     </div>
     {error && <ErrorNote message={error} onRetry={load} />}
-    <div className="card">
-      {loading ? <Skeleton rows={1} height={20} /> : <label className="checkbox-row">
-        <input type="checkbox" checked={enabled} onChange={(event) => set("remindersEnabled", event.target.checked ? "1" : "")} />
-        {t("Send reminder emails to customers")}
-      </label>}
-    </div>
-    <div className={`card reminder-card ${enabled ? "" : "disabled"}`}>
+    <div className={`card reminder-card ${pickupEnabled ? "" : "disabled"}`}>
       <h2 className="card-title">{t("Pickup reminder")}</h2>
       {loading ? <Skeleton rows={6} height={28} /> : <>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={pickupEnabled} onChange={(event) => set("reminderPickupEnabled", event.target.checked ? "1" : "0")} />
+          {t("Send pickup reminders")}
+        </label>
         <div className="form-grid">
-          <Field label={t("Hours before pickup")}><input disabled={!enabled} type="number" min="1" step="1" value={settings.reminderPickupHours} onChange={(e) => set("reminderPickupHours", e.target.value)} /></Field>
-          <Field label={t("Subject")}><input disabled={!enabled} type="text" value={settings.reminderPickupSubject} onChange={(e) => set("reminderPickupSubject", e.target.value)} /></Field>
+          <Field label={t("Hours before pickup")}><input disabled={!pickupEnabled} type="number" min="1" step="1" value={settings.reminderPickupHours} onChange={(e) => set("reminderPickupHours", e.target.value)} /></Field>
+          <Field label={t("Subject")}><input disabled={!pickupEnabled} type="text" value={settings.reminderPickupSubject} onChange={(e) => set("reminderPickupSubject", e.target.value)} /></Field>
         </div>
         <div className="faint reminder-placeholders">{t(PLACEHOLDERS)}</div>
-        <RichTextEditor disabled={!enabled} value={settings.reminderPickupTemplate} onChange={(value) => set("reminderPickupTemplate", value)} />
+        <RichTextEditor disabled={!pickupEnabled} value={settings.reminderPickupTemplate} onChange={(value) => set("reminderPickupTemplate", value)} />
       </>}
     </div>
-    <div className={`card reminder-card ${enabled ? "" : "disabled"}`}>
+    <div className={`card reminder-card ${returnEnabled ? "" : "disabled"}`}>
       <h2 className="card-title">{t("Return reminder")}</h2>
       {loading ? <Skeleton rows={6} height={28} /> : <>
+        <label className="checkbox-row">
+          <input type="checkbox" checked={returnEnabled} onChange={(event) => set("reminderReturnEnabled", event.target.checked ? "1" : "0")} />
+          {t("Send return reminders")}
+        </label>
         <div className="form-grid">
-          <Field label={t("Hours before return")}><input disabled={!enabled} type="number" min="1" step="1" value={settings.reminderReturnHours} onChange={(e) => set("reminderReturnHours", e.target.value)} /></Field>
-          <Field label={t("Subject")}><input disabled={!enabled} type="text" value={settings.reminderReturnSubject} onChange={(e) => set("reminderReturnSubject", e.target.value)} /></Field>
+          <Field label={t("Hours before return")}><input disabled={!returnEnabled} type="number" min="1" step="1" value={settings.reminderReturnHours} onChange={(e) => set("reminderReturnHours", e.target.value)} /></Field>
+          <Field label={t("Subject")}><input disabled={!returnEnabled} type="text" value={settings.reminderReturnSubject} onChange={(e) => set("reminderReturnSubject", e.target.value)} /></Field>
         </div>
         <div className="faint reminder-placeholders">{t(PLACEHOLDERS)}</div>
-        <RichTextEditor disabled={!enabled} value={settings.reminderReturnTemplate} onChange={(value) => set("reminderReturnTemplate", value)} />
+        <RichTextEditor disabled={!returnEnabled} value={settings.reminderReturnTemplate} onChange={(value) => set("reminderReturnTemplate", value)} />
       </>}
     </div>
   </div>;

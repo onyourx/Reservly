@@ -259,6 +259,52 @@ catalogRouter.get("/products/:id", (req, res) => {
   res.json({ product });
 });
 
+catalogRouter.put("/products/:id/store-qty", requirePerm("products"), (req, res) => {
+  const product = db.prepare("SELECT id,product_no FROM products WHERE id=? OR product_no=?")
+    .get(req.params.id, req.params.id) as { id: string; product_no: string } | undefined;
+  if (!product) return res.status(404).json({ error: "Product not found" });
+
+  const rawEntries = req.body?.entries;
+  if (!Array.isArray(rawEntries)) {
+    return res.status(400).json({ error: "entries must be an array" });
+  }
+
+  const entries: { storeId: string; qty: number }[] = [];
+  const seenStoreIds = new Set<string>();
+  for (const entry of rawEntries) {
+    const storeId = typeof entry?.storeId === "string" ? entry.storeId.trim() : "";
+    const qty = entry?.qty;
+    if (!storeId || !db.prepare("SELECT id FROM stores WHERE id=?").get(storeId)) {
+      return res.status(400).json({ error: `Unknown store: ${storeId || "(empty)"}` });
+    }
+    if (!Number.isInteger(qty) || qty < 0) {
+      return res.status(400).json({ error: "qty must be an integer greater than or equal to 0" });
+    }
+    if (seenStoreIds.has(storeId)) {
+      return res.status(400).json({ error: `Duplicate store: ${storeId}` });
+    }
+    seenStoreIds.add(storeId);
+    entries.push({ storeId, qty });
+  }
+
+  const replaceStoreQty = db.transaction(() => {
+    db.prepare("DELETE FROM product_store_qty WHERE product_id=?").run(product.id);
+    const upsert = db.prepare(`INSERT INTO product_store_qty(product_id,store_id,qty)
+      VALUES(?,?,?)
+      ON CONFLICT(product_id,store_id) DO UPDATE SET qty=excluded.qty`);
+    for (const entry of entries) {
+      if (entry.qty > 0) upsert.run(product.id, entry.storeId, entry.qty);
+    }
+  });
+  replaceStoreQty();
+
+  auditLog("product.store_qty_updated", product.product_no);
+  return res.json({
+    storeQty: db.prepare(`SELECT store_id AS storeId,qty FROM product_store_qty
+      WHERE product_id=? ORDER BY store_id`).all(product.id),
+  });
+});
+
 catalogRouter.post("/products/:id/push-nav", requirePerm("products"), async (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id=? OR product_no=?").get(req.params.id, req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
@@ -352,12 +398,15 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
     const ins = db.prepare("INSERT INTO product_kit_items (id, product_id, item_no, description, qty) VALUES (?, ?, ?, ?, ?)");
     for (const k of kit) ins.run(uid(), p.id, String(k.itemNo ?? ""), String(k.description ?? ""), Number(k.qty) || 1);
   }
-  if (Array.isArray(prices)) {
+  if (Array.isArray(prices) && p.type !== "SERVICE") {
     db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(p.id);
     const ins = db.prepare("INSERT INTO product_prices (id, product_id, description, price) VALUES (?, ?, ?, ?)");
     for (const t of prices) {
       if (String(t.description ?? "").trim()) ins.run(uid(), p.id, String(t.description).trim().toUpperCase(), Number(t.price) || 0);
     }
+  } else if (p.type === "SERVICE") {
+    // Clean up any orphaned product_prices rows for SERVICE products
+    db.prepare("DELETE FROM product_prices WHERE product_id = ?").run(p.id);
   }
   if (Array.isArray(addons)) {
     db.prepare("DELETE FROM product_addons WHERE product_id=?").run(p.id);
@@ -772,11 +821,22 @@ catalogRouter.post("/products/:id/push-shopify", requirePerm("products"), async 
 // --- Sessions (course instances) -------------------------------------------
 
 function serializeSession(s: any) {
+  const room = s.room_id
+    ? db.prepare("SELECT name FROM resources WHERE id = ?").get(s.room_id) as { name: string } | undefined
+    : undefined;
+  const trainers = db.prepare(
+    `SELECT r.id, r.name
+     FROM session_trainers st
+     JOIN resources r ON r.id = st.resource_id
+     WHERE st.session_id = ? AND r.type = 'TRAINER'
+     ORDER BY r.name`,
+  ).all(s.id) as { id: string; name: string }[];
   return {
     id: s.id, productId: s.product_id, seriesId: s.series_id, startsAt: s.starts_at, endsAt: s.ends_at,
-    storeId: s.store_id, roomId: s.room_id, capacity: s.capacity, booked: sessionBooked(s.id),
+    storeId: s.store_id, roomId: s.room_id, roomName: room?.name ?? "", capacity: s.capacity, booked: sessionBooked(s.id),
     instanceNo: s.instance_no, instanceCount: s.instance_count,
-    trainerIds: (db.prepare("SELECT resource_id FROM session_trainers WHERE session_id = ?").all(s.id) as any[]).map((t) => t.resource_id),
+    trainerIds: trainers.map((trainer) => trainer.id),
+    trainers,
     deliveryMode: s.delivery_mode || "IN_PERSON", meetingUrl: s.meeting_url || "",
     meetingHostUrl: s.meeting_host_url || "", zoomMeetingId: s.zoom_meeting_id || "",
   };

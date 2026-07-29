@@ -65,6 +65,11 @@ export interface ProductAddon {
   shopifyVariantId: string;
 }
 
+export interface StoreQty {
+  storeId: string;
+  qty: number;
+}
+
 export interface Product {
   id: string;
   productNo: string;
@@ -90,6 +95,7 @@ export interface Product {
   navSyncedAt?: string;
   kit: KitItem[];
   prices: PriceTier[];
+  storeQty: StoreQty[];
   sessions?: Session[];
   translations: ProductTranslation[];
   addons: ProductAddon[];
@@ -119,7 +125,9 @@ export interface Session {
   endsAt: string;
   storeId: string;
   roomId: string | null;
+  roomName: string;
   trainerIds: string[];
+  trainers: { id: string; name: string }[];
   capacity: number;
   booked: number;
   instanceNo: number;
@@ -419,6 +427,8 @@ export interface Settings {
   maxCustomerReschedules?: string;
   reminderHours?: string;
   remindersEnabled?: string;
+  reminderPickupEnabled?: string;
+  reminderReturnEnabled?: string;
   reminderPickupHours?: string;
   reminderReturnHours?: string;
   reminderPickupSubject?: string;

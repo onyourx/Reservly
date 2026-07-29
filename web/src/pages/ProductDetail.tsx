@@ -51,6 +51,8 @@ export function ProductDetail() {
   const [crossSellProductNos, setCrossSellProductNos] = useState<string[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [crossSellSelection, setCrossSellSelection] = useState("");
+  const [storeQtyInputs, setStoreQtyInputs] = useState<Record<string, string>>({});
+  const [savingStoreQty, setSavingStoreQty] = useState(false);
 
   // Session form (COURSE only)
   const [rooms, setRooms] = useState<Resource[]>([]);
@@ -91,6 +93,9 @@ export function ProductDetail() {
         setPriceTiers(p.prices ?? []);
         setAddons(p.addons ?? []);
         setCrossSellProductNos((p.crossSell ?? []).map((suggestion) => suggestion.productNo));
+        setStoreQtyInputs(Object.fromEntries(
+          (p.storeQty ?? []).map((entry) => [entry.storeId, String(entry.qty)]),
+        ));
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -129,7 +134,7 @@ export function ProductDetail() {
           defaultUnitPrice: Number(defaultUnitPrice) || 0,
           securityDeposit: Number(securityDeposit) || 0,
           lateFeePerDay: Number(lateFeePerDay) || 0,
-          prices: priceTiers,
+          ...(p.type !== "SERVICE" ? { prices: priceTiers } : {}),
           addons,
           crossSellProductNos: crossSellProductNos.length ? crossSellProductNos : null,
         },
@@ -140,6 +145,27 @@ export function ProductDetail() {
       toast.error(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveStoreQty = async () => {
+    setSavingStoreQty(true);
+    try {
+      await api<{ storeQty: Product["storeQty"] }>(`/api/products/${id}/store-qty`, {
+        method: "PUT",
+        body: {
+          entries: stores.map((store) => ({
+            storeId: store.id,
+            qty: Number(storeQtyInputs[store.id] || 0),
+          })),
+        },
+      });
+      toast.success(t("Locations & units"));
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSavingStoreQty(false);
     }
   };
 
@@ -560,7 +586,11 @@ export function ProductDetail() {
           <hr className="divider" />
           <h2 className="card-title">Pricing</h2>
           <div className="faint" style={{ marginBottom: 10 }}>
-            {p.type === "RENTAL" ? "Daily rate; a WEEKLY tier is applied per 7-day block when cheaper." : "Price per seat."}
+            {p.type === "RENTAL"
+              ? t("Daily rate; a WEEKLY tier is applied per 7-day block when cheaper.")
+              : p.type === "COURSE"
+                ? t("Price per seat.")
+                : t("Price per appointment.")}
             {" "}In live NAV mode, the next catalog sync overwrites these with NAV prices.
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
@@ -596,43 +626,47 @@ export function ProductDetail() {
               </Field>
             )}
           </div>
-          {priceTiers.map((tier, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-              <input
-                type="text"
-                placeholder="Tier (e.g. WEEKLY)"
-                value={tier.description}
-                style={{ width: 140 }}
-                onChange={(e) =>
-                  setPriceTiers(priceTiers.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))
-                }
-              />
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={tier.price}
-                onChange={(e) =>
-                  setPriceTiers(priceTiers.map((x, j) => (j === i ? { ...x, price: Number(e.target.value) || 0 } : x)))
-                }
-              />
+          {p.type !== "SERVICE" && (
+            <>
+              {priceTiers.map((tier, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                  <input
+                    type="text"
+                    placeholder="Tier (e.g. WEEKLY)"
+                    value={tier.description}
+                    style={{ width: 140 }}
+                    onChange={(e) =>
+                      setPriceTiers(priceTiers.map((x, j) => (j === i ? { ...x, description: e.target.value } : x)))
+                    }
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={tier.price}
+                    onChange={(e) =>
+                      setPriceTiers(priceTiers.map((x, j) => (j === i ? { ...x, price: Number(e.target.value) || 0 } : x)))
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label="Remove price tier"
+                    onClick={() => setPriceTiers(priceTiers.filter((_, j) => j !== i))}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
               <button
                 type="button"
-                className="icon-btn"
-                aria-label="Remove price tier"
-                onClick={() => setPriceTiers(priceTiers.filter((_, j) => j !== i))}
+                className="btn btn-sm"
+                onClick={() => setPriceTiers([...priceTiers, { description: "WEEKLY", price: 0 }])}
               >
-                ×
+                Add price tier
               </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => setPriceTiers([...priceTiers, { description: "WEEKLY", price: 0 }])}
-          >
-            Add price tier
-          </button>
+            </>
+          )}
 
           <hr className="divider" />
           <h2 className="card-title">Customer add-ons</h2>
@@ -774,6 +808,55 @@ export function ProductDetail() {
         <>
           <div style={{ height: 18 }} />
           <RentalAvailabilityCalendar productNo={p.productNo} />
+        </>
+      )}
+
+      {p.type !== "COURSE" && (
+        <>
+          <div style={{ height: 18 }} />
+          <div className="card">
+            <h2 className="card-title">{t("Locations & units")}</h2>
+            <div className="faint" style={{ marginBottom: 12 }}>
+              {t(p.type === "RENTAL"
+                ? "Units available to rent at each location."
+                : "Concurrent appointments per location.")}
+            </div>
+            <div className="table-wrap">
+              <table className="table">
+                <thead><tr><th>{t("Locations")}</th><th className="num">{t("Number")}</th></tr></thead>
+                <tbody>
+                  {stores.map((store) => (
+                    <tr key={store.id}>
+                      <td>{store.name}</td>
+                      <td className="num">
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={storeQtyInputs[store.id] ?? ""}
+                          onChange={(event) => setStoreQtyInputs((current) => ({
+                            ...current,
+                            [store.id]: event.target.value,
+                          }))}
+                          style={{ width: 100 }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {stores.every((store) => (Number(storeQtyInputs[store.id]) || 0) === 0) && (
+              <div className="faint" style={{ marginTop: 10 }}>
+                {t("This product isn't bookable anywhere yet.")}
+              </div>
+            )}
+            <div className="btn-row" style={{ marginTop: 12 }}>
+              <button type="button" className="btn btn-primary" disabled={savingStoreQty} onClick={() => void saveStoreQty()}>
+                {savingStoreQty && <Spinner small />} {t("Save")}
+              </button>
+            </div>
+          </div>
         </>
       )}
 

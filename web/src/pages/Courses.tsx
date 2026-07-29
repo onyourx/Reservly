@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, qs } from "../api";
 import type {
   AvailabilitySlot,
+  Product,
   Resource,
   ResourceType,
   Session,
@@ -28,7 +29,11 @@ function ScheduleTab() {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
   const [sessions, setSessions] = useState<(Session & { productName?: string })[] | null>(null);
+  const [courses, setCourses] = useState<Product[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
+  const [courseId, setCourseId] = useState("");
+  const [roomId, setRoomId] = useState("");
+  const [trainerId, setTrainerId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -83,7 +88,21 @@ function ScheduleTab() {
     api<{ resources: Resource[] }>("/api/resources")
       .then((d) => setResources(d.resources))
       .catch(() => setResources([]));
+    api<{ products: Product[] }>("/api/products?type=COURSE")
+      .then((d) => setCourses(d.products))
+      .catch(() => setCourses([]));
   }, []);
+
+  const rooms = useMemo(() => resources.filter((resource) => resource.type === "ROOM"), [resources]);
+  const trainers = useMemo(() => resources.filter((resource) => resource.type === "TRAINER"), [resources]);
+  const filtersActive = Boolean(courseId || roomId || trainerId);
+  const filteredSessions = useMemo(
+    () => (sessions ?? []).filter((session) =>
+      (!courseId || session.productId === courseId)
+      && (!roomId || session.roomId === roomId)
+      && (!trainerId || session.trainers.some((trainer) => trainer.id === trainerId))),
+    [courseId, roomId, sessions, trainerId],
+  );
 
   const remove = async (s: Session) => {
     if (!window.confirm(`Delete session on ${fmtDateTime(s.startsAt)}?`)) return;
@@ -101,7 +120,7 @@ function ScheduleTab() {
 
   const sessionsByDate = useMemo(() => {
     const grouped = new Map<string, (Session & { productName?: string })[]>();
-    for (const session of sessions ?? []) {
+    for (const session of filteredSessions) {
       const key = dateKey(new Date(session.startsAt));
       grouped.set(key, [...(grouped.get(key) ?? []), session]);
     }
@@ -109,7 +128,11 @@ function ScheduleTab() {
       daySessions.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
     }
     return grouped;
-  }, [sessions]);
+  }, [filteredSessions]);
+
+  const calendarFilterName = !courseId
+    ? (roomId ? rooms.find((room) => room.id === roomId)?.name : trainers.find((trainer) => trainer.id === trainerId)?.name)
+    : undefined;
 
   const openAttendees = async (sessionId: string) => {
     setAttendeesLoading(true);
@@ -131,6 +154,42 @@ function ScheduleTab() {
 
   return (
     <div className="card">
+      <div className="filters">
+        <label>
+          <span>{t("Course")}</span>
+          <select value={courseId} onChange={(event) => setCourseId(event.target.value)}>
+            <option value="">{t("All courses")}</option>
+            {courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>{t("Room")}</span>
+          <select value={roomId} onChange={(event) => setRoomId(event.target.value)}>
+            <option value="">{t("All rooms")}</option>
+            {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>{t("Trainer")}</span>
+          <select value={trainerId} onChange={(event) => setTrainerId(event.target.value)}>
+            <option value="">{t("All trainers")}</option>
+            {trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}</option>)}
+          </select>
+        </label>
+        {filtersActive && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              setCourseId("");
+              setRoomId("");
+              setTrainerId("");
+            }}
+          >
+            {t("Reset")}
+          </button>
+        )}
+      </div>
       <div className="calendar-head">
         <div>
           {view === "calendar" && (
@@ -188,6 +247,11 @@ function ScheduleTab() {
           </div>
         </div>
       </div>
+      {view === "calendar" && calendarFilterName && (
+        <p className="muted calendar-filter-heading">
+          {t("Calendar: {{name}}").replace("{{name}}", calendarFilterName)}
+        </p>
+      )}
       {error && <ErrorNote message={error} onRetry={load} />}
       {loading ? (
         <Skeleton rows={5} height={20} />
@@ -214,7 +278,12 @@ function ScheduleTab() {
                       key={session.id}
                       onClick={() => void openAttendees(session.id)}
                     >
-                      {fmtTime(session.startsAt)} {session.productName ?? session.productNo} ({session.booked}/{session.capacity})
+                      <span>{fmtTime(session.startsAt)} {session.productName ?? session.productNo} ({session.booked}/{session.capacity})</span>
+                      {(session.roomName || session.trainers.length > 0) && (
+                        <span className="session-chip-hint">
+                          {[session.roomName, session.trainers.map((trainer) => trainer.name).join(", ")].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -222,7 +291,7 @@ function ScheduleTab() {
             );
           })}
         </div>
-      ) : !sessions || sessions.length === 0 ? (
+      ) : filteredSessions.length === 0 ? (
         <EmptyState
           title="No upcoming sessions"
           hint="Schedule sessions from a course product page."
@@ -243,7 +312,7 @@ function ScheduleTab() {
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) => (
+              {filteredSessions.map((s) => (
                 <tr key={s.id}>
                   <td>{fmtDate(s.startsAt)}</td>
                   <td className="muted">
@@ -256,10 +325,10 @@ function ScheduleTab() {
                     )}
                   </td>
                   <td className="muted">{storeName(s.storeId)}</td>
-                  <td className="muted">{resourceName(s.roomId)}</td>
+                  <td className="muted">{s.roomName || resourceName(s.roomId)}</td>
                   <td className="muted">
-                    {s.trainerIds.length > 0
-                      ? s.trainerIds.map((t) => resourceName(t)).join(", ")
+                    {s.trainers.length > 0
+                      ? s.trainers.map((trainer) => trainer.name).join(", ")
                       : "—"}
                   </td>
                   <td className="num">

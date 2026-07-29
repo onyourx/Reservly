@@ -36,10 +36,23 @@ const formatTime = (value: string) => new Date(value).toLocaleTimeString("en-CA"
   timeZone: storeTimeZone(),
 });
 
+function isReminderEnabled(newKey: string, legacyEnabled: string): boolean {
+  if (newKey === "1") return true;
+  if (newKey === "" && legacyEnabled === "1") return true;
+  return false;
+}
+
 export function scheduleBookingReminders(bookingId: string) {
-  db.prepare("DELETE FROM notification_jobs WHERE booking_id=? AND status='PENDING'").run(bookingId);
   const settings = getSettings();
-  if (settings.remindersEnabled !== "1") return;
+  const pickupEnabled = isReminderEnabled(settings.reminderPickupEnabled, settings.remindersEnabled);
+  const returnEnabled = isReminderEnabled(settings.reminderReturnEnabled, settings.remindersEnabled);
+  if (!pickupEnabled && !returnEnabled) {
+    db.prepare("DELETE FROM notification_jobs WHERE booking_id=? AND status='PENDING'").run(bookingId);
+    return;
+  }
+
+  db.prepare(`UPDATE notification_jobs SET status='CANCELLED'
+    WHERE booking_id=? AND status='PENDING' AND type IN ('REMINDER_PICKUP','REMINDER_RETURN')`).run(bookingId);
 
   const dates = db.prepare(
     "SELECT MIN(date_from) starts, MAX(date_to) ends FROM booking_lines WHERE booking_id=?",
@@ -50,10 +63,11 @@ export function scheduleBookingReminders(bookingId: string) {
     VALUES(?,?,?,?,'PENDING',?)`);
 
   const reminders = [
-    { type: "REMINDER_PICKUP", date: dates?.starts, hours: settings.reminderPickupHours },
-    { type: "REMINDER_RETURN", date: dates?.ends, hours: settings.reminderReturnHours },
+    { type: "REMINDER_PICKUP", enabled: pickupEnabled, date: dates?.starts, hours: settings.reminderPickupHours },
+    { type: "REMINDER_RETURN", enabled: returnEnabled, date: dates?.ends, hours: settings.reminderReturnHours },
   ];
   for (const reminder of reminders) {
+    if (!reminder.enabled) continue;
     // Skip REMINDER_RETURN for service-only bookings
     if (allService && reminder.type === "REMINDER_RETURN") continue;
     if (!reminder.date) continue;

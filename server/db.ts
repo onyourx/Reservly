@@ -505,6 +505,8 @@ const SETTING_DEFAULTS: Record<string, string> = {
   noShowFeeValue: "0",
   reminderHours: "[24]",
   remindersEnabled: "",
+  reminderPickupEnabled: "",
+  reminderReturnEnabled: "",
   reminderPickupHours: "24",
   reminderReturnHours: "24",
   reminderPickupSubject: "Reminder: your rental pickup at {{store}}",

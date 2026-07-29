@@ -40,7 +40,13 @@ interface NavGroup {
 
 const NAV_ITEMS: (NavItem | NavGroup)[] = [
   { to: "/", label: "Dashboard", end: true },
-  { to: "/bookings", label: "Bookings", end: true, need: "bookings" },
+  {
+    label: "Bookings",
+    children: [
+      { to: "/bookings", label: "All bookings", end: true, need: "bookings" },
+      { to: "/courses", label: "Sessions & Resources", end: false, need: "sessions" },
+    ],
+  },
   {
     label: "Settings",
     children: [
@@ -48,7 +54,6 @@ const NAV_ITEMS: (NavItem | NavGroup)[] = [
       { to: "/products/courses", label: "Courses", end: false, need: "products" },
       { to: "/products/services", label: "Services", end: false, need: "products" },
       { to: "/fleet", label: "Rental fleet", end: false, need: "products" },
-      { to: "/courses", label: "Sessions & Resources", end: false, need: "sessions" },
       { to: "/availability-rules", label: "Hours & blackouts", end: false, need: "availability" },
       { to: "/team", label: "Team", end: true, need: "manage" },
       { to: "/contract-template", label: "Contract template", end: false, need: "manage" },
@@ -231,24 +236,17 @@ function Shell() {
               if ("children" in entry) {
                 const visibleChildren = entry.children.filter(canSee);
                 if (visibleChildren.length === 0) return null;
-                return (
-                  <div key={entry.label} className="drawer-section">
-                    <div className="drawer-section-heading">{t(entry.label)}</div>
-                    <div className="drawer-section-items">
-                      {visibleChildren.map((item) => (
-                        <NavLink
-                          key={item.to}
-                          to={item.to}
-                          end={item.end}
-                          className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
-                          onClick={() => setMenuOpen(false)}
-                        >
-                          {t(item.label)}
-                        </NavLink>
-                      ))}
-                    </div>
-                  </div>
-                );
+                return visibleChildren.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    {t(item.label)}
+                  </NavLink>
+                ));
               }
               if (entry.to === "/tenants" && !admin) return null;
               if (!canSee(entry)) return null;

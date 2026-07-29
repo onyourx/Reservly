@@ -92,7 +92,10 @@ export function setAdminPassword(pw: string) {
   auditLog("password.changed");
 }
 
-export const authRequired = () => Boolean(getSettings().adminPasswordHash);
+export const authRequired = () => Boolean(
+  getSettings().adminPasswordHash
+  || db.prepare("SELECT 1 FROM staff_users WHERE active=1 LIMIT 1").get(),
+);
 
 export function isAuthenticated(req: Request): boolean {
   if (adminSession(req)) return true; // platform super admin passes every tenant gate
