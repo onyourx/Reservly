@@ -122,6 +122,14 @@ CREATE TABLE IF NOT EXISTS booking_fields (
   sort INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS booking_field_translations (
+  field_id TEXT NOT NULL REFERENCES booking_fields(id) ON DELETE CASCADE,
+  locale TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  options TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY (field_id, locale)
+);
+
 CREATE TABLE IF NOT EXISTS product_store_qty (   -- rentable units per store
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   store_id TEXT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,

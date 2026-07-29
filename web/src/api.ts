@@ -45,6 +45,13 @@ export interface BookingField {
   options: string[];
   required: boolean;
   sort: number;
+  translations: BookingFieldTranslation[];
+}
+
+export interface BookingFieldTranslation {
+  locale: string;
+  label: string;
+  options: string[];
 }
 
 export interface KitItem {

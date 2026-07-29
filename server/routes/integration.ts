@@ -545,20 +545,33 @@ proxyRouter.get("/service-slots", (req, res) => {
 
 proxyRouter.get("/product-fields", (req, res) => {
   const productNo = String(req.query.productNo || "").trim();
+  const requestedLocale = String(req.query.locale || "").trim().toLowerCase();
+  const locale = requestedLocale === "en" ? "" : requestedLocale;
   if (!productNo) return res.status(400).json({ error: "productNo required" });
   const product = db.prepare("SELECT id,min_qty,max_qty FROM products WHERE product_no=?").get(productNo) as
     { id: string; min_qty: number; max_qty: number } | undefined;
   if (!product) return res.status(404).json({ error: "Product not found" });
   const customFields = (db.prepare(`SELECT id,label,type,options,required FROM booking_fields
-    WHERE product_id=? ORDER BY sort,id`).all(product.id) as any[]).map((field) => ({
-    id: field.id,
-    name: field.label,
-    type: field.type,
-    required: !!field.required,
-    placeholder: "",
-    options: pj<string[]>(field.options, []),
-    validation: {},
-  }));
+    WHERE product_id=? ORDER BY sort,id`).all(product.id) as any[]).map((field) => {
+    const optionValues = pj<string[]>(field.options, []);
+    const translation = locale
+      ? db.prepare(`SELECT label,options FROM booking_field_translations
+          WHERE field_id=? AND locale=?`).get(field.id, locale) as any
+      : undefined;
+    const translatedOptions = translation ? pj<string[]>(translation.options, []) : [];
+    return {
+      id: field.id,
+      name: translation?.label || field.label,
+      type: field.type,
+      required: !!field.required,
+      placeholder: "",
+      options: translation
+        ? optionValues.map((option, index) => translatedOptions[index] || option)
+        : optionValues,
+      optionValues,
+      validation: {},
+    };
+  });
   const settings = getSettings();
   res.json({
     productNo,

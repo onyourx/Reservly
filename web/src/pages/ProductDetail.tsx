@@ -31,7 +31,9 @@ export function ProductDetail() {
   const [confirmImageRemove, setConfirmImageRemove] = useState(false);
   const [fieldForm, setFieldForm] = useState<{
     id?: string; label: string; type: BookingField["type"]; options: string; required: boolean; sort: string;
+    translations: Record<string, { label: string; options: string[] }>;
   } | null>(null);
+  const [fieldLanguage, setFieldLanguage] = useState("");
   const [savingField, setSavingField] = useState(false);
   const [confirmFieldDelete, setConfirmFieldDelete] = useState<string | null>(null);
 
@@ -255,13 +257,22 @@ export function ProductDetail() {
     }
   };
 
-  const openFieldForm = (field?: BookingField) => setFieldForm(field ? {
-    id: field.id, label: field.label, type: field.type, options: field.options.join(", "),
-    required: field.required, sort: String(field.sort),
-  } : {
-    label: "", type: "text", options: "", required: false,
-    sort: String(Math.max(-1, ...(product?.bookingFields ?? []).map((item) => item.sort)) + 1),
-  });
+  const openFieldForm = (field?: BookingField) => {
+    const additionalLanguages = enabledLanguages.slice(1);
+    setFieldLanguage(additionalLanguages[0] || "");
+    setFieldForm(field ? {
+      id: field.id, label: field.label, type: field.type, options: field.options.join(", "),
+      required: field.required, sort: String(field.sort),
+      translations: Object.fromEntries((field.translations ?? []).map((translation) => [
+        translation.locale,
+        { label: translation.label, options: translation.options },
+      ])),
+    } : {
+      label: "", type: "text", options: "", required: false,
+      sort: String(Math.max(-1, ...(product?.bookingFields ?? []).map((item) => item.sort)) + 1),
+      translations: {},
+    });
+  };
 
   const saveField = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -280,6 +291,13 @@ export function ProductDetail() {
         body: {
           label: fieldForm.label.trim(), type: fieldForm.type, options,
           required: fieldForm.required, sort: Number(fieldForm.sort) || 0,
+          translations: Object.fromEntries(enabledLanguages.slice(1).map((locale) => {
+            const translation = fieldForm.translations[locale] ?? { label: "", options: [] };
+            return [locale, {
+              label: translation.label.trim(),
+              options: options.map((_, index) => translation.options[index]?.trim() ?? ""),
+            }];
+          })),
         },
       });
       toast.success(t(fieldForm.id ? "Field updated" : "Field added"));
@@ -749,6 +767,50 @@ export function ProductDetail() {
               <Field label="Sort"><input type="number" value={fieldForm.sort} onChange={(e) => setFieldForm({ ...fieldForm, sort: e.target.value })} /></Field>
               <label className="checkbox-row"><input type="checkbox" checked={fieldForm.required} onChange={(e) => setFieldForm({ ...fieldForm, required: e.target.checked })} />Required</label>
             </div>
+            {enabledLanguages.length > 1 && (
+              <div style={{ marginTop: 14 }}>
+                <div className="btn-row" style={{ marginBottom: 12 }}>
+                  {enabledLanguages.slice(1).map((locale) => (
+                    <button key={locale} type="button"
+                      className={`btn btn-sm ${fieldLanguage === locale ? "btn-primary" : ""}`}
+                      onClick={() => setFieldLanguage(locale)}>
+                      {languageName(locale)}
+                    </button>
+                  ))}
+                </div>
+                {enabledLanguages.slice(1).filter((locale) => locale === fieldLanguage).map((locale) => {
+                  const translated = fieldForm.translations[locale] ?? { label: "", options: [] };
+                  const canonicalOptions = fieldForm.options.split(",").map((option) => option.trim()).filter(Boolean);
+                  const updateTranslation = (patch: Partial<typeof translated>) =>
+                    setFieldForm({
+                      ...fieldForm,
+                      translations: {
+                        ...fieldForm.translations,
+                        [locale]: { ...translated, ...patch },
+                      },
+                    });
+                  return (
+                    <div className="translation-panel" key={locale}>
+                      <Field label="Translated label">
+                        <input value={translated.label} onChange={(e) => updateTranslation({ label: e.target.value })} />
+                      </Field>
+                      {["dropdown", "radio"].includes(fieldForm.type) && canonicalOptions.map((option, index) => (
+                        <Field key={`${locale}-${index}`} label={`Display text for “${option}”`}>
+                          <input
+                            value={translated.options[index] ?? ""}
+                            onChange={(e) => {
+                              const nextOptions = [...translated.options];
+                              nextOptions[index] = e.target.value;
+                              updateTranslation({ options: nextOptions });
+                            }}
+                          />
+                        </Field>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="btn-row" style={{ marginTop: 12 }}>
               <button type="submit" className="btn btn-primary" disabled={savingField}>{savingField && <Spinner small />} {t("Save field")}</button>
               <button type="button" className="btn" disabled={savingField} onClick={() => setFieldForm(null)}>{t("Cancel")}</button>

@@ -14,6 +14,7 @@
     data-type="{{ btype }}"
     data-product-no="{{ bno | escape }}"
     data-product-title="{{ product.title | escape }}"
+    data-locale="{{ request.locale.iso_code | escape }}"
     data-proxy="/apps/booking"
   >
     <button type="button" class="gsl-launch">

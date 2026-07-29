@@ -126,9 +126,20 @@ function serializeProduct(p: any) {
     translations: db.prepare("SELECT locale, name, description FROM product_translations WHERE product_id = ? ORDER BY locale").all(p.id),
     storeQty: db.prepare("SELECT store_id AS storeId, qty FROM product_store_qty WHERE product_id = ?").all(p.id),
     bookingFields: (db.prepare(`SELECT id,label,type,options,required,sort FROM booking_fields
-      WHERE product_id=? ORDER BY sort,id`).all(p.id) as any[]).map((field) => ({
-      ...field, options: pj<string[]>(field.options, []), required: !!field.required,
-    })),
+      WHERE product_id=? ORDER BY sort,id`).all(p.id) as any[]).map((field) => {
+      const options = pj<string[]>(field.options, []);
+      return {
+        ...field, options, required: !!field.required,
+        translations: (db.prepare(`SELECT locale,label,options FROM booking_field_translations
+          WHERE field_id=? ORDER BY locale`).all(field.id) as any[]).map((translation) => {
+          const translatedOptions = pj<string[]>(translation.options, []);
+          return {
+            ...translation,
+            options: options.map((_, index) => translatedOptions[index] ?? ""),
+          };
+        }),
+      };
+    }),
     addons: db.prepare(`SELECT id,addon_product_no AS addonProductNo,name,price,max_qty AS maxQty,
       required,active,shopify_variant_id AS shopifyVariantId FROM product_addons WHERE product_id=? ORDER BY name`).all(p.id),
     crossSell: db.prepare(`SELECT suggested.product_no AS productNo,suggested.name,suggested.type,
@@ -455,6 +466,34 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
 });
 
 const FIELD_TYPES = ["text", "textarea", "dropdown", "radio", "checkbox", "date", "number"];
+const LOCALE_PATTERN = /^[a-z]{2}(-[a-z]{2})?$/;
+
+function bookingFieldTranslations(fieldId: string) {
+  return (db.prepare(`SELECT locale,label,options FROM booking_field_translations
+    WHERE field_id=? ORDER BY locale`).all(fieldId) as any[]).map((translation) => ({
+    ...translation,
+    options: pj<string[]>(translation.options, []),
+  }));
+}
+
+function writeBookingFieldTranslations(fieldId: string, translations: unknown) {
+  if (!translations || typeof translations !== "object" || Array.isArray(translations)) return;
+  const upsert = db.prepare(`INSERT INTO booking_field_translations(field_id,locale,label,options)
+    VALUES(?,?,?,?) ON CONFLICT(field_id,locale) DO UPDATE SET
+    label=excluded.label,options=excluded.options`);
+  const remove = db.prepare("DELETE FROM booking_field_translations WHERE field_id=? AND locale=?");
+  for (const [rawLocale, rawTranslation] of Object.entries(translations)) {
+    const locale = rawLocale.trim().toLowerCase();
+    if (!LOCALE_PATTERN.test(locale) || !rawTranslation || typeof rawTranslation !== "object") continue;
+    const translation = rawTranslation as { label?: unknown; options?: unknown };
+    const label = String(translation.label ?? "").trim();
+    const options = Array.isArray(translation.options)
+      ? translation.options.map((option) => String(option).trim())
+      : [];
+    if (!label && options.every((option) => !option)) remove.run(fieldId, locale);
+    else upsert.run(fieldId, locale, label, JSON.stringify(options));
+  }
+}
 
 function validateBookingField(value: any, existing?: any): { value?: any; error?: string } {
   const merged = { ...existing, ...value };
@@ -481,9 +520,12 @@ catalogRouter.post("/products/:id/fields", requirePerm("products"), (req, res) =
   if (checked.error) return res.status(400).json({ error: checked.error });
   const id = uid();
   const field = checked.value;
-  db.prepare(`INSERT INTO booking_fields(id,product_id,label,type,options,required,sort)
-    VALUES(?,?,?,?,?,?,?)`).run(id, req.params.id, field.label, field.type, JSON.stringify(field.options), field.required, field.sort);
-  return res.json({ id });
+  db.transaction(() => {
+    db.prepare(`INSERT INTO booking_fields(id,product_id,label,type,options,required,sort)
+      VALUES(?,?,?,?,?,?,?)`).run(id, req.params.id, field.label, field.type, JSON.stringify(field.options), field.required, field.sort);
+    writeBookingFieldTranslations(id, req.body?.translations);
+  })();
+  return res.json({ id, translations: bookingFieldTranslations(id) });
 });
 
 catalogRouter.put("/products/:id/fields/:fieldId", requirePerm("products"), (req, res) => {
@@ -493,9 +535,12 @@ catalogRouter.put("/products/:id/fields/:fieldId", requirePerm("products"), (req
   const checked = validateBookingField(req.body, existing);
   if (checked.error) return res.status(400).json({ error: checked.error });
   const field = checked.value;
-  db.prepare(`UPDATE booking_fields SET label=?,type=?,options=?,required=?,sort=? WHERE id=? AND product_id=?`)
-    .run(field.label, field.type, JSON.stringify(field.options), field.required, field.sort, existing.id, req.params.id);
-  return res.json({ ok: true });
+  db.transaction(() => {
+    db.prepare(`UPDATE booking_fields SET label=?,type=?,options=?,required=?,sort=? WHERE id=? AND product_id=?`)
+      .run(field.label, field.type, JSON.stringify(field.options), field.required, field.sort, existing.id, req.params.id);
+    if (req.body?.translations !== undefined) writeBookingFieldTranslations(existing.id, req.body.translations);
+  })();
+  return res.json({ ok: true, translations: bookingFieldTranslations(existing.id) });
 });
 
 catalogRouter.delete("/products/:id/fields/:fieldId", requirePerm("products"), (req, res) => {

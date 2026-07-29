@@ -12,6 +12,7 @@
     var proxy = root.dataset.proxy;
     var type = root.dataset.type;
     var productNo = root.dataset.productNo;
+    var locale = root.dataset.locale || "";
     var productTitle = root.dataset.productTitle || "Booking";
     var modal = root.querySelector(".gsl-modal");
     var dialog = root.querySelector(".gsl-dialog");
@@ -27,6 +28,7 @@
     var detailsNeeded = false;
     var fieldsLoaded = false;
     var customFields = [];
+    var customFieldOptionValues = {};
     var fieldResponses = {};
     var termsRequired = false;
     var termsAccepted = false;
@@ -194,9 +196,13 @@
 
     function loadMetadata() {
       if (fieldsLoaded) return;
-      request("/product-fields", { productNo: productNo }).then(function (data) {
+      request("/product-fields", { productNo: productNo, locale: locale }).then(function (data) {
         fieldsLoaded = true;
         customFields = data.customFields || [];
+        customFieldOptionValues = {};
+        customFields.forEach(function (definition) {
+          customFieldOptionValues[definition.id] = definition.optionValues || definition.options || [];
+        });
         termsRequired = !!(data.termsEnabled && data.termsEnabled[type]);
         quantityMin = Math.max(1, Number(data.quantity && data.quantity.min) || 1);
         quantityMax = Math.max(quantityMin, Number(data.quantity && data.quantity.max) || quantityMin);
@@ -648,17 +654,22 @@
       } else if (definition.type === "dropdown") {
         control = el("select");
         control.appendChild(new Option("Select…", ""));
-        (definition.options || []).forEach(function (option) { control.appendChild(new Option(option, option)); });
+        (definition.options || []).forEach(function (option, index) {
+          var values = customFieldOptionValues[definition.id] || [];
+          control.appendChild(new Option(option, values[index] == null ? option : values[index]));
+        });
       } else if (definition.type === "radio") {
         control = el("div", "gsl-options");
-        (definition.options || []).forEach(function (option) {
+        (definition.options || []).forEach(function (option, index) {
+          var values = customFieldOptionValues[definition.id] || [];
+          var optionValue = values[index] == null ? option : values[index];
           var optionLabel = el("label", "gsl-check-row");
           var radio = el("input");
           radio.type = "radio";
           radio.name = "gsl-field-" + definition.id;
-          radio.value = option;
-          radio.checked = fieldResponses[definition.id] === option;
-          radio.addEventListener("change", function () { fieldResponses[definition.id] = option; });
+          radio.value = optionValue;
+          radio.checked = fieldResponses[definition.id] === optionValue;
+          radio.addEventListener("change", function () { fieldResponses[definition.id] = optionValue; });
           optionLabel.appendChild(radio);
           optionLabel.appendChild(document.createTextNode(option));
           control.appendChild(optionLabel);

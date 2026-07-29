@@ -535,7 +535,7 @@ function ServiceBuilder({
 /* ---------------- Page ---------------- */
 
 export function BookingNew() {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const navigate = useNavigate();
   const toast = useToast();
   const { stores, storeId: globalStoreId } = useStores();
@@ -832,13 +832,18 @@ export function BookingNew() {
             <h2 className="card-title">{t("Booking details")}</h2>
             <div className="form-grid">
               {bookingFields.map((field) => {
+                const translation = field.translations?.find((entry) => entry.locale === language);
+                const displayLabel = translation?.label || field.label;
+                const displayOptions = translation
+                  ? field.options.map((option, index) => translation.options[index] || option)
+                  : field.options;
                 const setResponse = (value: unknown) => {
                   setFieldResponses((current) => ({ ...current, [field.id]: value }));
                 };
                 return (
                   <Field
                     key={field.id}
-                    label={<>{field.label}{field.required && <span style={{ color: "#b91c1c" }}> *</span>}</>}
+                    label={<>{displayLabel}{field.required && <span style={{ color: "#b91c1c" }}> *</span>}</>}
                   >
                     {field.type === "textarea" ? (
                       <textarea
@@ -851,11 +856,13 @@ export function BookingNew() {
                         onChange={(event) => setResponse(event.target.value)}
                       >
                         <option value="">Select…</option>
-                        {field.options.map((option) => <option key={option}>{option}</option>)}
+                        {field.options.map((option, index) => (
+                          <option key={option} value={option}>{displayOptions[index]}</option>
+                        ))}
                       </select>
                     ) : field.type === "radio" ? (
                       <div>
-                        {field.options.map((option) => (
+                        {field.options.map((option, index) => (
                           <label key={option} className="checkbox-row">
                             <input
                               type="radio"
@@ -863,7 +870,7 @@ export function BookingNew() {
                               checked={fieldResponses[field.id] === option}
                               onChange={() => setResponse(option)}
                             />
-                            {option}
+                            {displayOptions[index]}
                           </label>
                         ))}
                       </div>
@@ -874,7 +881,7 @@ export function BookingNew() {
                           checked={fieldResponses[field.id] === true}
                           onChange={(event) => setResponse(event.target.checked)}
                         />
-                        {field.label}
+                        {displayLabel}
                       </label>
                     ) : (
                       <input
