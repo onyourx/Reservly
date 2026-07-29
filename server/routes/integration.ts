@@ -21,6 +21,7 @@ import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availab
 import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhotos.js";
 import { sendClassTicketEmail } from "../lib/ticketEmail.js";
 import { getAllEmittedEvents, PRESETS } from "../lib/webhookPresets.js";
+import { encryptSecret } from "../lib/crypto.js";
 
 export const settingsRouter = Router();
 export const shopifyRouter = Router(); // mounted at /webhooks/shopify with raw body
@@ -28,7 +29,7 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-export const SAFE_KEYS = ["currency", "navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupEnabled", "reminderReturnEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml", "shippingFeeDefault", "shipReturnAddress", "shipBufferPricePerDay"];
+export const SAFE_KEYS = ["currency", "navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupEnabled", "reminderReturnEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml", "shippingFeeDefault", "shipReturnAddress", "shipBufferPricePerDay", "googleClientId", "msClientId", "msTenantId", "calendarSyncEnabled", "calendarPublicUrl"];
 
 settingsRouter.get("/health", (_req, res) => {
   res.json({
@@ -88,7 +89,13 @@ settingsRouter.get("/settings", (_req, res) => {
 });
 
 settingsRouter.put("/settings", requireOwner, (req, res) => {
-  const { adminPassword, sftpPassword, sftpPasswordEnc: _ignoredSftpPasswordEnc, ...rest } = req.body ?? {};
+  const {
+    adminPassword, sftpPassword, googleClientSecret, msClientSecret,
+    sftpPasswordEnc: _ignoredSftpPasswordEnc,
+    googleClientSecretEnc: _ignoredGoogleClientSecretEnc,
+    msClientSecretEnc: _ignoredMsClientSecretEnc,
+    ...rest
+  } = req.body ?? {};
   if ("currency" in rest) {
     const normalized = String(rest.currency ?? "").toUpperCase().trim();
     if (!normalized) {
@@ -116,6 +123,8 @@ settingsRouter.put("/settings", requireOwner, (req, res) => {
   if (sftpPassword && sftpPassword !== "") {
     putSettings({ sftpPasswordEnc: encryptPasswordForSftp(String(sftpPassword)) });
   }
+  if (googleClientSecret) putSettings({ googleClientSecretEnc: encryptSecret(String(googleClientSecret)) });
+  if (msClientSecret) putSettings({ msClientSecretEnc: encryptSecret(String(msClientSecret)) });
   putSettings(rest);
   const s = getSettings();
   res.json({ settings: Object.fromEntries(SAFE_KEYS.map((k) => [k, s[k] ?? ""])) });

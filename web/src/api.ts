@@ -188,6 +188,7 @@ export interface ResourceBlock {
   reason: string;
   source: string;
   createdAt: string;
+  externalEventId?: string;
 }
 
 export interface RentalAvailability {
@@ -503,12 +504,19 @@ export interface Settings {
   shippingFeeDefault?: string;
   shipReturnAddress?: string;
   shipBufferPricePerDay?: string;
+  googleClientId?: string;
+  msClientId?: string;
+  msTenantId?: string;
+  calendarSyncEnabled?: string;
+  calendarPublicUrl?: string;
   /** Write-only: accepted on PUT, never returned by GET. */
   navPassword?: string;
   shopifyApiSecret?: string;
   zoomClientSecret?: string;
   adminPassword?: string;
   sftpPassword?: string;
+  googleClientSecret?: string;
+  msClientSecret?: string;
 }
 
 export interface ApiOptions {

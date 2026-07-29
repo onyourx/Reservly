@@ -16,6 +16,9 @@ import { discoverRouter } from "./routes/discover.js";
 import { usersRouter } from "./routes/users.js";
 import { startNotificationSchedule } from "./lib/notifications.js";
 import { consumePrintToken } from "./lib/printing.js";
+import { calendarsRouter } from "./routes/calendars.js";
+import { syncAllResources } from "./lib/calendarSync.js";
+import { getSettings } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 try { process.loadEnvFile(path.join(__dirname, "..", ".env")); } catch { /* no .env — mailer stays unconfigured */ }
@@ -38,6 +41,8 @@ app.use(express.json({ limit: "2mb" }));
 app.use(tenantMiddleware);
 app.use("/api/admin", adminRouter);
 app.use("/uploads", express.static(path.join(DATA_DIR, "uploads")));
+// The OAuth callback is public; every other calendar route has its own permission middleware.
+app.use("/api", calendarsRouter);
 
 // Staff auth gate: everything under /api and /print except health/login/status.
 // Shopify surfaces (/webhooks, /proxy) authenticate by signature instead.
@@ -73,6 +78,16 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 startRetentionSchedule();
 startNotificationSchedule();
+export function startCalendarSchedule() {
+  if (getSettings().calendarSyncEnabled !== "1") return;
+  const timer = setInterval(() => {
+    void syncAllResources().then((results) => {
+      for (const result of results) if (!result.ok) console.warn("[calendar] scheduled sync failed", result);
+    }).catch((error) => console.warn("[calendar] scheduled sync failed", String(error)));
+  }, 15 * 60_000);
+  timer.unref();
+}
+startCalendarSchedule();
 
 // Production: serve the built SPAs — staff mobile app at /m, admin everywhere else.
 const dist = path.join(__dirname, "..", "web", "dist");

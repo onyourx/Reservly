@@ -7,6 +7,7 @@ import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels, sh
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
 import { createZoomMeeting } from "../lib/zoom.js";
+import { deleteSessionEvent, pushSessionEvent } from "../lib/calendarSync.js";
 import { serializeBooking } from "../lib/bookingService.js";
 import { allowedStoreIds, requireOwner, requirePerm, staffAccess } from "../lib/auth.js";
 import { DATA_DIR } from "../lib/platform.js";
@@ -1088,12 +1089,21 @@ catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
       storeId, isOnline ? null : roomId ?? null, Number(capacity) || 8, i + 1, n, deliveryMode, joinUrl, hostUrl, zoomId,
       isOnline ? 1 : 0);
     for (const t of trainerIds) db.prepare("INSERT OR IGNORE INTO session_trainers (session_id, resource_id) VALUES (?, ?)").run(id, t);
-    out.push(serializeSession(db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)));
+    const stored = db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as any;
+    out.push(serializeSession(stored));
+    for (const resourceId of [...(stored.room_id ? [stored.room_id] : []), ...trainerIds.map(String)]) {
+      void pushSessionEvent(stored, resourceId);
+    }
   }
   res.json({ sessions: out });
 });
 
 catalogRouter.delete("/sessions/:id", requirePerm("sessions"), (req, res) => {
+  const session = db.prepare("SELECT room_id FROM sessions WHERE id=?").get(req.params.id) as { room_id: string | null } | undefined;
+  const trainers = db.prepare("SELECT resource_id FROM session_trainers WHERE session_id=?").all(req.params.id) as { resource_id: string }[];
+  for (const resourceId of [...(session?.room_id ? [session.room_id] : []), ...trainers.map((item) => item.resource_id)]) {
+    void deleteSessionEvent(req.params.id, resourceId);
+  }
   db.prepare("DELETE FROM sessions WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
@@ -1258,7 +1268,8 @@ catalogRouter.post("/resources/:id/availability/bulk", requirePerm("sessions"), 
 
 catalogRouter.get("/resources/:id/blocks", requirePerm("sessions"), (req, res) => {
   const { from, to } = req.query as Record<string, string>;
-  let sql = `SELECT id, date, from_time AS fromTime, to_time AS toTime, reason, source, created_at AS createdAt
+  let sql = `SELECT id, date, from_time AS fromTime, to_time AS toTime, reason, source,
+    external_event_id AS externalEventId, created_at AS createdAt
     FROM resource_blocks WHERE resource_id = ?`;
   const params: unknown[] = [req.params.id];
   if (from) { sql += " AND date >= ?"; params.push(from); }

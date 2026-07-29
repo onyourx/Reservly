@@ -2,7 +2,7 @@
 // AES-256-GCM; key from BOOKING_ENC_KEY (64 hex chars) or derived from a dev passphrase.
 import crypto from "node:crypto";
 
-function key(): Buffer {
+export function key(): Buffer {
   const hex = process.env.BOOKING_ENC_KEY || "";
   if (/^[0-9a-f]{64}$/i.test(hex)) return Buffer.from(hex, "hex");
   return crypto.scryptSync("booking-dev-only-key", "gosselin", 32);

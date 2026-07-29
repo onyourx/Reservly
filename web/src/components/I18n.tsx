@@ -5,6 +5,13 @@ type Messages = Record<string, string>;
 
 const messages: Record<UiLanguage, Messages> = {
   en: {
+    "calendarSync.title": "Calendar Sync", "calendarSync.enabled": "Enabled", "calendarSync.enabledToggle": "Enable automatic calendar sync",
+    "calendarSync.google.title": "Google Calendar", "calendarSync.google.clientId": "Google client ID", "calendarSync.google.clientSecret": "Google client secret",
+    "calendarSync.microsoft.title": "Microsoft Outlook", "calendarSync.microsoft.clientId": "Microsoft client ID", "calendarSync.microsoft.tenantId": "Microsoft tenant ID", "calendarSync.microsoft.clientSecret": "Microsoft client secret",
+    "calendarSync.redirectUrl": "OAuth redirect URL", "calendarSync.syncNow": "Sync now", "calendarSync.syncResults": "Calendar sync results",
+    "calendar.connect.google": "Connect Google", "calendar.connect.outlook": "Connect Outlook", "calendar.unlink": "Unlink",
+    "calendar.linkedEmail": "Linked account", "calendar.lastSync": "Last synced", "calendar.lastError": "Last error", "calendar.refresh": "Refresh",
+    "blocks.importedFromCalendar": "from calendar",
     product_shipping_title: "Shipping", product_shipping_toggle: "Enable shipping for this rental",
     product_shipping_fee: "Shipping Fee", product_shipping_buffer_before: "Buffer Before (days)",
     product_shipping_buffer_after: "Buffer After (days)",
@@ -148,6 +155,13 @@ const messages: Record<UiLanguage, Messages> = {
     "Online service": "Online service",
   },
   fr: {
+    "calendarSync.title": "Synchronisation des calendriers", "calendarSync.enabled": "Activée", "calendarSync.enabledToggle": "Activer la synchronisation automatique",
+    "calendarSync.google.title": "Google Agenda", "calendarSync.google.clientId": "ID client Google", "calendarSync.google.clientSecret": "Secret client Google",
+    "calendarSync.microsoft.title": "Microsoft Outlook", "calendarSync.microsoft.clientId": "ID client Microsoft", "calendarSync.microsoft.tenantId": "ID locataire Microsoft", "calendarSync.microsoft.clientSecret": "Secret client Microsoft",
+    "calendarSync.redirectUrl": "URL de redirection OAuth", "calendarSync.syncNow": "Synchroniser", "calendarSync.syncResults": "Résultats de synchronisation",
+    "calendar.connect.google": "Connecter Google", "calendar.connect.outlook": "Connecter Outlook", "calendar.unlink": "Dissocier",
+    "calendar.linkedEmail": "Compte lié", "calendar.lastSync": "Dernière synchronisation", "calendar.lastError": "Dernière erreur", "calendar.refresh": "Actualiser",
+    "blocks.importedFromCalendar": "du calendrier",
     product_shipping_title: "Expédition", product_shipping_toggle: "Activer l’expédition pour cette location",
     product_shipping_fee: "Frais d’expédition", product_shipping_buffer_before: "Marge avant (jours)",
     product_shipping_buffer_after: "Marge après (jours)",
@@ -349,6 +363,13 @@ const messages: Record<UiLanguage, Messages> = {
     "Online service": "Service en ligne",
   },
   es: {
+    "calendarSync.title": "Sincronización de calendarios", "calendarSync.enabled": "Activada", "calendarSync.enabledToggle": "Activar la sincronización automática",
+    "calendarSync.google.title": "Google Calendar", "calendarSync.google.clientId": "ID de cliente de Google", "calendarSync.google.clientSecret": "Secreto de cliente de Google",
+    "calendarSync.microsoft.title": "Microsoft Outlook", "calendarSync.microsoft.clientId": "ID de cliente de Microsoft", "calendarSync.microsoft.tenantId": "ID de inquilino de Microsoft", "calendarSync.microsoft.clientSecret": "Secreto de cliente de Microsoft",
+    "calendarSync.redirectUrl": "URL de redirección OAuth", "calendarSync.syncNow": "Sincronizar ahora", "calendarSync.syncResults": "Resultados de sincronización",
+    "calendar.connect.google": "Conectar Google", "calendar.connect.outlook": "Conectar Outlook", "calendar.unlink": "Desvincular",
+    "calendar.linkedEmail": "Cuenta vinculada", "calendar.lastSync": "Última sincronización", "calendar.lastError": "Último error", "calendar.refresh": "Actualizar",
+    "blocks.importedFromCalendar": "del calendario",
     product_shipping_title: "Envío", product_shipping_toggle: "Activar envío para este alquiler",
     product_shipping_fee: "Tarifa de envío", product_shipping_buffer_before: "Margen anterior (días)",
     product_shipping_buffer_after: "Margen posterior (días)",

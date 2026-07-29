@@ -165,6 +165,20 @@ CREATE TABLE IF NOT EXISTS resource_blocks (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS resource_calendars (
+  resource_id TEXT PRIMARY KEY REFERENCES resources(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  calendar_id TEXT NOT NULL DEFAULT 'primary',
+  account_email TEXT DEFAULT '',
+  access_token_enc TEXT DEFAULT '',
+  refresh_token_enc TEXT DEFAULT '',
+  expires_at INTEGER DEFAULT 0,
+  sync_token TEXT DEFAULT '',
+  last_sync_at TEXT DEFAULT '',
+  last_error TEXT DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (            -- course instances; series share series_id
   id TEXT PRIMARY KEY,
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
@@ -181,6 +195,13 @@ CREATE TABLE IF NOT EXISTS sessions (            -- course instances; series sha
 CREATE TABLE IF NOT EXISTS session_trainers (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+  PRIMARY KEY (session_id, resource_id)
+);
+
+CREATE TABLE IF NOT EXISTS session_calendar_events (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+  external_event_id TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (session_id, resource_id)
 );
 
@@ -504,6 +525,8 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE bookings ADD COLUMN fulfillment TEXT NOT NULL DEFAULT 'PICKUP'",
     "ALTER TABLE bookings ADD COLUMN ship_address TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN shipping_fee REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE sessions ADD COLUMN external_event_id TEXT DEFAULT ''",
+    "ALTER TABLE resource_blocks ADD COLUMN external_event_id TEXT DEFAULT ''",
   ]) {
     try {
       d.exec(stmt);
@@ -612,6 +635,13 @@ const SETTING_DEFAULTS: Record<string, string> = {
   shippingFeeDefault: "0",
   shipReturnAddress: "",
   shipBufferPricePerDay: "0",
+  googleClientId: "",
+  googleClientSecretEnc: "",
+  msClientId: "",
+  msTenantId: "common",
+  msClientSecretEnc: "",
+  calendarSyncEnabled: "",
+  calendarPublicUrl: "",
 };
 
 export function getSettings(): Record<string, string> {

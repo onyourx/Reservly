@@ -26,6 +26,8 @@ const EMPTY = {
   termsRentalHtml: "", termsCourseHtml: "", termsServiceHtml: "",
   termsRentalPdf: "", termsCoursePdf: "", termsServicePdf: "",
   sftpHost: "", sftpPort: "22", sftpUser: "", sftpPassword: "", sftpPath: "/reservly-ids",
+  googleClientId: "", googleClientSecret: "", msClientId: "", msTenantId: "common", msClientSecret: "",
+  calendarSyncEnabled: "", calendarPublicUrl: "",
   zoomClientSecret: "", navPassword: "", shopifyApiSecret: "", adminPassword: "",
 };
 type GeneralSettings = typeof EMPTY;
@@ -39,7 +41,7 @@ const generalSettings = (loaded: Partial<Settings>): GeneralSettings => {
   return result;
 };
 
-const WRITE_ONLY: (keyof GeneralSettings)[] = ["navPassword", "shopifyApiSecret", "adminPassword", "zoomClientSecret", "sftpPassword"];
+const WRITE_ONLY: (keyof GeneralSettings)[] = ["navPassword", "shopifyApiSecret", "adminPassword", "zoomClientSecret", "sftpPassword", "googleClientSecret", "msClientSecret"];
 const TABS: { id: Tab; label: string }[] = [
   { id: "store", label: "Stores" },
   { id: "access", label: "Access & privacy" },
@@ -260,6 +262,20 @@ export function SettingsPage() {
       toast.error(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const syncCalendars = async () => {
+    setTesting(true);
+    try {
+      const { results } = await api<{ results: { resourceId: string; ok: boolean; error?: string }[] }>("/api/calendars/sync", { method: "POST" });
+      const ok = results.filter((result) => result.ok).length;
+      const failed = results.length - ok;
+      toast[failed ? "error" : "success"](`${t("calendarSync.syncResults")}: ${ok} OK${failed ? `, ${failed} failed` : ""}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Calendar sync failed");
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -737,6 +753,26 @@ export function SettingsPage() {
           <Field label="Zoom client secret (write-only)"><input type="password" value={settings.zoomClientSecret || ""} onChange={(e) => set("zoomClientSecret", e.target.value)} autoComplete="new-password" /></Field>
           <Field label="Zoom host user" hint='Email, user ID, or "me" for the account owner.'><input value={settings.zoomUserId} onChange={(e) => set("zoomUserId", e.target.value)} /></Field>
         </>, 4)}</div>
+        <div className="card"><h2 className="card-title">{t("calendarSync.title")}</h2>{fields(<>
+          <label className="checkbox-row">
+            <input type="checkbox" checked={settings.calendarSyncEnabled === "1"} onChange={(event) => set("calendarSyncEnabled", event.target.checked ? "1" : "")} />
+            {t("calendarSync.enabledToggle")}
+          </label>
+          <Field label={t("calendarSync.redirectUrl")} hint={`${(settings.calendarPublicUrl || settings.publicUrl).replace(/\/+$/, "")}/api/calendars/oauth/callback`}>
+            <input type="url" value={settings.calendarPublicUrl} onChange={(event) => set("calendarPublicUrl", event.target.value)} placeholder={settings.publicUrl || "https://booking.example.com"} />
+          </Field>
+          <hr className="divider" /><h3 className="card-title">{t("calendarSync.google.title")}</h3>
+          <Field label={t("calendarSync.google.clientId")}><input value={settings.googleClientId} onChange={(event) => set("googleClientId", event.target.value)} /></Field>
+          <Field label={t("calendarSync.google.clientSecret")}><input type="password" value={settings.googleClientSecret} onChange={(event) => set("googleClientSecret", event.target.value)} autoComplete="new-password" placeholder="Write-only" /></Field>
+          <hr className="divider" /><h3 className="card-title">{t("calendarSync.microsoft.title")}</h3>
+          <Field label={t("calendarSync.microsoft.clientId")}><input value={settings.msClientId} onChange={(event) => set("msClientId", event.target.value)} /></Field>
+          <Field label={t("calendarSync.microsoft.tenantId")}><input value={settings.msTenantId} onChange={(event) => set("msTenantId", event.target.value)} /></Field>
+          <Field label={t("calendarSync.microsoft.clientSecret")}><input type="password" value={settings.msClientSecret} onChange={(event) => set("msClientSecret", event.target.value)} autoComplete="new-password" placeholder="Write-only" /></Field>
+          <div className="btn-row">
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={() => void save()}>{saving && <Spinner small />} {t("Save")}</button>
+            <button type="button" className="btn" disabled={testing} onClick={() => void syncCalendars()}>{testing && <Spinner small />} {t("calendarSync.syncNow")}</button>
+          </div>
+        </>, 9)}</div>
         <div className="card"><h2 className="card-title">{t("Conduit")}</h2>{fields(
           <Field label="Conduit URL"><input type="url" value={settings.conduitUrl} onChange={(e) => set("conduitUrl", e.target.value)} placeholder="https://conduit.example.com" /></Field>, 1
         )}</div>

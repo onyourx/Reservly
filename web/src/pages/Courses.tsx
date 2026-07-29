@@ -16,6 +16,7 @@ import { Modal } from "../components/Modal";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { EmptyState, ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
+import { useAuth } from "../components/AuthGate";
 
 /* ---------------- Schedule tab ---------------- */
 
@@ -449,6 +450,8 @@ const isoDate = (date: Date) =>
 function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; onChanged: () => void }) {
   const toast = useToast();
   const { t } = useI18n();
+  const { access } = useAuth();
+  const owner = access?.canManageUsers === true;
   const [capacity, setCapacity] = useState(String(resource.capacity ?? 0));
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [fromTime, setFromTime] = useState("09:00");
@@ -470,6 +473,7 @@ function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; o
   const [blockTo, setBlockTo] = useState("16:00");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [calendar, setCalendar] = useState<{ provider: string; accountEmail: string; lastSyncAt: string; lastError: string } | null>(null);
 
   const calendarDays = useMemo(() => {
     const first = new Date(month.getFullYear(), month.getMonth(), 1);
@@ -485,12 +489,14 @@ function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; o
     const from = isoDate(calendarDays[0]);
     const to = isoDate(calendarDays[calendarDays.length - 1]);
     try {
-      const [availability, blockData] = await Promise.all([
+      const [availability, blockData, calendarData] = await Promise.all([
         api<{ slots: AvailabilitySlot[] }>(`/api/resources/${resource.id}/availability${qs({ from, to })}`),
         api<{ blocks: ResourceBlock[] }>(`/api/resources/${resource.id}/blocks${qs({ from, to })}`),
+        api<{ provider: string; accountEmail: string; lastSyncAt: string; lastError: string } | null>(`/api/resources/${resource.id}/calendar`),
       ]);
       setSlots(availability.slots);
       setBlocks(blockData.blocks);
+      setCalendar(calendarData);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load schedule");
     }
@@ -521,9 +527,45 @@ function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; o
   ] as const;
   const selectedSlots = slots.filter((slot) => slot.date === selectedDate);
   const selectedBlocks = blocks.filter((block) => block.date === selectedDate);
+  const linkCalendar = async (provider: "GOOGLE" | "MICROSOFT") => {
+    try {
+      const { authUrl } = await api<{ authUrl: string }>(`/api/resources/${resource.id}/calendar/link`, { body: { provider } });
+      window.open(authUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not connect calendar");
+    }
+  };
+  const unlinkCalendar = () => execute(
+    () => api(`/api/resources/${resource.id}/calendar`, { method: "DELETE" }),
+    t("calendar.unlink"),
+  );
+  const refreshCalendar = () => execute(
+    () => api("/api/calendars/sync", { method: "POST" }),
+    t("calendar.refresh"),
+  );
 
   return (
     <div>
+      <div className="translation-panel">
+        <h3 className="card-title">{t("Calendar")}</h3>
+        {calendar ? (
+          <>
+            <div><strong>{calendar.accountEmail || calendar.provider}</strong></div>
+            <div className="faint">{t("calendar.lastSync")}: {calendar.lastSyncAt ? fmtDateTime(calendar.lastSyncAt) : "—"}</div>
+            {calendar.lastError && <div className="error-note">{t("calendar.lastError")}: {calendar.lastError}</div>}
+            {owner && <div className="btn-row" style={{ marginTop: 8 }}>
+              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void refreshCalendar()}>{t("calendar.refresh")}</button>
+              <button type="button" className="btn btn-danger btn-sm" disabled={busy} onClick={() => void unlinkCalendar()}>{t("calendar.unlink")}</button>
+            </div>}
+          </>
+        ) : owner ? (
+          <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={() => void linkCalendar("GOOGLE")}>{t("calendar.connect.google")}</button>
+            <button type="button" className="btn btn-sm" onClick={() => void linkCalendar("MICROSOFT")}>{t("calendar.connect.outlook")}</button>
+          </div>
+        ) : <div className="faint">—</div>}
+      </div>
+      <hr className="divider" />
       <div className="form-grid-3">
         <Field label={t("Room capacity")}>
           <input type="number" min={0} value={capacity} onChange={(event) => setCapacity(event.target.value)} />
@@ -593,8 +635,11 @@ function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; o
                   <span className="session-chip" style={{ background: "var(--ok-soft)", borderColor: "var(--ok)" }} key={slot.id}>{slot.from}–{slot.to}</span>
                 ))}
                 {blocks.filter((block) => block.date === key).map((block) => (
-                  <span className="session-chip full" style={{ background: "#fff4f3", borderColor: "var(--danger)", opacity: 1 }} title={block.reason} key={block.id}>
-                    {block.fromTime}–{block.toTime}
+                  <span className="session-chip full" style={{
+                    background: block.source === "MANUAL" ? "#fff4f3" : "#eef5ff",
+                    borderColor: block.source === "MANUAL" ? "var(--danger)" : "#7aa7df", opacity: 1,
+                  }} title={block.reason} key={block.id}>
+                    {block.fromTime}–{block.toTime}{block.source !== "MANUAL" ? ` · ${t("blocks.importedFromCalendar")}` : ""}
                   </span>
                 ))}
               </span>
@@ -629,9 +674,9 @@ function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; o
           <h4>{t("Existing blocks")}</h4>
           {selectedBlocks.length === 0 ? <div className="faint">—</div> : selectedBlocks.map((block) => (
             <div className="btn-row" key={block.id}>{block.fromTime}–{block.toTime} {block.reason && `(${block.reason})`}
-              <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void execute(
+              {block.source === "MANUAL" && <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void execute(
                 () => api(`/api/resources/${resource.id}/blocks/${block.id}`, { method: "DELETE" }), "Deleted",
-              )}>Delete</button>
+              )}>Delete</button>}
             </div>
           ))}
           <h4>{t("Block time")}</h4>
