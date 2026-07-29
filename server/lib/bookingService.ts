@@ -2,7 +2,7 @@
 // the Shopify orders/create webhook (web channel) — one code path for both R4-R5
 // and class steps 6-10.
 import crypto from "node:crypto";
-import { db, uid, now, pj, j, getSettings } from "../db.js";
+import { db, uid, now, pj, j, getSettings, auditLog } from "../db.js";
 import { quoteLines, round2, type QuoteLineIn } from "../engine/pricing.js";
 import { confirmReservation } from "./nav.js";
 import { idLast4 } from "./crypto.js";
@@ -38,6 +38,7 @@ export async function createBooking(input: {
   intakeResponses?: Record<string, unknown>;
   fieldResponses?: Record<string, unknown>;
   termsAccepted?: boolean;
+  enforceTerms?: boolean;
   addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId?: string }[];
 }) {
   if (!input.customer?.email) throw new Error("customer.email is required");
@@ -84,7 +85,9 @@ export async function createBooking(input: {
   for (const field of fields) {
     const hasValue = Object.prototype.hasOwnProperty.call(responses, field.id);
     let value = responses[field.id];
-    if (field.required && (!hasValue || value === "" || value == null)) {
+    const requiredCheckboxMissing = field.type === "checkbox"
+      && value !== true && value !== "true" && value !== 1 && value !== "1";
+    if (field.required && (!hasValue || value === "" || value == null || requiredCheckboxMissing)) {
       throw new BookingValidationError({ error: "field_required", fieldId: field.id });
     }
     if (!hasValue || value === "" || value == null) continue;
@@ -109,10 +112,19 @@ export async function createBooking(input: {
   }
 
   const settings = getSettings();
+  const ref = newRef();
   const termsTypes = [...new Set(quoted.lines.map((line) => line.type.toLowerCase()))]
     .filter((type) => settings[`terms${type[0].toUpperCase()}${type.slice(1)}Enabled`] === "1");
   if (termsTypes.length && input.termsAccepted !== true) {
-    throw new BookingValidationError({ error: "terms_required", types: termsTypes });
+    if (input.enforceTerms !== false) {
+      throw new BookingValidationError({ error: "terms_required", types: termsTypes });
+    }
+    auditLog("terms.missing_on_paid_order", ref);
+    console.warn("[bookingService] Missing required terms acceptance on paid order; creating booking", {
+      bookingRef: ref,
+      shopifyOrderId: input.shopifyOrderId,
+      termsTypes,
+    });
   }
   const addonTotal = round2((input.addons || []).reduce((sum, a) => sum + (Number(a.unitPrice) || 0) * Math.max(1, Number(a.qty) || 1), 0));
   const commerceTotal = round2(quoted.subtotal + addonTotal);
@@ -120,7 +132,6 @@ export async function createBooking(input: {
   const types = new Set(quoted.lines.map((l) => l.type));
   const type = types.size > 1 ? "MIXED" : [...types][0];
   const id = uid();
-  const ref = newRef();
   const status = input.paid ? "PAID" : "RESERVED";
   const manageToken = crypto.randomBytes(24).toString("base64url");
 
@@ -233,6 +244,7 @@ export function serializeBooking(id: string) {
   const events = (db.prepare("SELECT * FROM events WHERE booking_id = ? ORDER BY id DESC LIMIT 50").all(b.id) as any[]).map((e) => ({
     at: e.at, type: e.type, detail: pj(e.detail, {}),
   }));
+  const fieldResponses = pj(b.intake_responses, {});
   return {
     id: b.id, ref: b.ref, type: b.type, status: b.status, channel: b.channel, storeId: b.store_id,
     customer: {
@@ -249,7 +261,7 @@ export function serializeBooking(id: string) {
     notes: b.notes, createdAt: b.created_at, checkedInAt: b.checked_in_at, noShowAt: b.no_show_at,
     noShowFee: Number(b.no_show_fee || 0), noShowFeeStatus: b.no_show_fee_status || "",
     noShowDraftOrderId: b.no_show_draft_order_id || "",
-    intakeResponses: pj(b.intake_responses, {}), rescheduleCount: b.reschedule_count || 0,
+    intakeResponses: fieldResponses, fieldResponses, rescheduleCount: b.reschedule_count || 0,
     termsAcceptedAt: b.terms_accepted_at || "",
     addons: db.prepare(`SELECT addon_product_no AS productNo,name,qty,unit_price AS unitPrice,
       shopify_variant_id AS shopifyVariantId FROM booking_addons WHERE booking_id=?`).all(b.id),

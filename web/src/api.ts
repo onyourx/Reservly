@@ -300,6 +300,7 @@ export interface Booking {
   noShowFeeStatus?: string;
   noShowDraftOrderId?: string;
   intakeResponses?: Record<string, unknown>;
+  fieldResponses?: Record<string, unknown>;
   termsAcceptedAt?: string;
   rescheduleCount?: number;
   currency: string;

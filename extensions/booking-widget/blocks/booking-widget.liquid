@@ -1,87 +1,75 @@
 {% comment %}
-  Booking widget — app section for rental/course product pages.
+  Reservly storefront booking widget.
 
-  Renders ONLY when the product carries booking metafields (set automatically by
-  Booking Desk → "Publish to Shopify"):
-    product.metafields.booking.type        → "RENTAL" | "COURSE"
-    product.metafields.booking.product_no  → LS Activity ProductNo
-
-  Rentals: store picker + range calendar (unavailable days disabled via the app
-  proxy) + pickup/return times + live quote. Courses: upcoming session slots.
-  Selection is submitted as _booking_* line item properties so retail items and
-  bookings check out in ONE Shopify transaction.
+  Shopify still owns checkout: the hidden form and its _booking_* line-item
+  properties are populated by booking-widget.js after the modal flow completes.
 {% endcomment %}
 
 {% assign btype = product.metafields.booking.type %}
 {% assign bno = product.metafields.booking.product_no %}
 
-{% if btype == 'RENTAL' or btype == 'COURSE' %}
-<div class="gsl-booking" data-type="{{ btype }}" data-product-no="{{ bno }}"
-     data-proxy="/apps/booking">
-  <div class="gsl-head">
-    <h3>{% if btype == 'RENTAL' %}Reserve this equipment{% else %}Choose a class date{% endif %}</h3>
-    <span class="gsl-tag">{% if btype == 'RENTAL' %}Rental{% else %}Course{% endif %}</span>
+{% if btype == 'RENTAL' or btype == 'COURSE' or btype == 'SERVICE' %}
+  <div
+    class="gsl-booking"
+    data-type="{{ btype }}"
+    data-product-no="{{ bno | escape }}"
+    data-product-title="{{ product.title | escape }}"
+    data-proxy="/apps/booking"
+  >
+    <button type="button" class="gsl-launch">
+      {% case btype %}
+        {% when 'RENTAL' %}Check availability
+        {% when 'COURSE' %}Select a time
+        {% else %}Book now
+      {% endcase %}
+    </button>
+
+    <div class="gsl-modal" hidden>
+      <div class="gsl-backdrop" data-gsl-close></div>
+      <section
+        class="gsl-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gsl-modal-title"
+        tabindex="-1"
+      >
+        <header class="gsl-modal-head">
+          <div>
+            <h2 id="gsl-modal-title">{{ product.title | escape }}</h2>
+            <p class="gsl-timezone"></p>
+          </div>
+          <button type="button" class="gsl-close" data-gsl-close aria-label="Close booking dialog">&times;</button>
+        </header>
+        <div class="gsl-progress" aria-live="polite"></div>
+        <div class="gsl-modal-body"></div>
+        <footer class="gsl-modal-foot">
+          <button type="button" class="gsl-secondary gsl-back" hidden>Back</button>
+          <button type="button" class="gsl-primary gsl-next" disabled>Next</button>
+        </footer>
+      </section>
+    </div>
+
+    <form method="post" action="{{ routes.cart_add_url }}" class="gsl-add-form" hidden>
+      <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
+      <input type="hidden" name="quantity" value="1" class="gsl-qty">
+      <input type="hidden" name="properties[_booking_type]" value="{{ btype }}">
+      <input type="hidden" name="properties[_product_no]" value="{{ bno | escape }}">
+      <input type="hidden" name="properties[_store_id]" class="gsl-p-store">
+      <input type="hidden" name="properties[_from]" class="gsl-p-from">
+      <input type="hidden" name="properties[_to]" class="gsl-p-to">
+      <input type="hidden" name="properties[_session_id]" class="gsl-p-session">
+      <input type="hidden" name="properties[_hold_token]" class="gsl-p-hold">
+      <input type="hidden" name="properties[_terms_accepted]" class="gsl-p-terms" value="false">
+      <input type="hidden" name="properties[Booking]" class="gsl-p-label">
+    </form>
   </div>
 
-  {% if btype == 'RENTAL' %}
-    <label class="gsl-field">Pick-up store
-      <select class="gsl-store"><option value="">Loading stores…</option></select>
-    </label>
-
-    <div class="gsl-cal">
-      <div class="gsl-cal-head">
-        <button type="button" class="gsl-cal-prev" aria-label="Previous month">‹</button>
-        <span class="gsl-cal-title"></span>
-        <button type="button" class="gsl-cal-next" aria-label="Next month">›</button>
-      </div>
-      <div class="gsl-cal-dow"></div>
-      <div class="gsl-cal-grid" role="grid"></div>
-      <div class="gsl-cal-hint">Select a pick-up day, then a return day</div>
-    </div>
-
-    <div class="gsl-times">
-      <label class="gsl-field">Pick-up time
-        <select class="gsl-time-from"></select>
-      </label>
-      <label class="gsl-field">Return time
-        <select class="gsl-time-to"></select>
-      </label>
-    </div>
-
-    <div class="gsl-quote" hidden>
-      <div class="gsl-quote-row"><span class="gsl-days"></span><strong class="gsl-price"></strong></div>
-      <div class="gsl-deposit"></div>
-      <div class="gsl-avail"></div>
-    </div>
-  {% else %}
-    <div class="gsl-slots"><em>Loading sessions…</em></div>
-  {% endif %}
-
-  <form method="post" action="{{ routes.cart_add_url }}" class="gsl-add-form">
-    <input type="hidden" name="id" value="{{ product.selected_or_first_available_variant.id }}">
-    <input type="hidden" name="quantity" value="1" class="gsl-qty">
-    <input type="hidden" name="properties[_booking_type]" value="{{ btype }}">
-    <input type="hidden" name="properties[_product_no]" value="{{ bno }}">
-    <input type="hidden" name="properties[_store_id]" class="gsl-p-store">
-    <input type="hidden" name="properties[_from]" class="gsl-p-from">
-    <input type="hidden" name="properties[_to]" class="gsl-p-to">
-    <input type="hidden" name="properties[_session_id]" class="gsl-p-session">
-    <input type="hidden" name="properties[_hold_token]" class="gsl-p-hold">
-    <input type="hidden" name="properties[Booking]" class="gsl-p-label">
-    <button type="submit" class="gsl-add" disabled>
-      {% if btype == 'RENTAL' %}Select dates to book{% else %}Select a session{% endif %}
-    </button>
-  </form>
-</div>
-
-{{ 'booking-widget.css' | asset_url | stylesheet_tag }}
-<script src="{{ 'booking-widget.js' | asset_url }}" defer></script>
+  {{ 'booking-widget.css' | asset_url | stylesheet_tag }}
+  <script src="{{ 'booking-widget.js' | asset_url }}" defer></script>
 {% elsif request.design_mode %}
-  {% comment %} Theme editor only: explain why nothing renders on this product. {% endcomment %}
   <div style="padding:14px;border:1px dashed #bbb;border-radius:8px;color:#666;font-size:14px;">
-    Booking widget: this product has no <code>booking.type</code> metafield, so the widget
-    stays hidden on the storefront. Publish a rental or course from Booking Desk, or set the
-    metafields manually, and it will appear here.
+    Booking widget: this product has no supported <code>booking.type</code> metafield.
+    Publish a rental, course, or service from Booking Desk to show the booking button.
   </div>
 {% endif %}
 

@@ -254,6 +254,8 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
 
     const lines: any[] = [];
     const addons: any[] = [];
+    const bookingProperties: Record<string, string> = {};
+    const bookingLineProperties: Record<string, string>[] = [];
     for (const item of order.line_items ?? []) {
       const props: Record<string, string> = Object.fromEntries((item.properties ?? []).map((p: any) => [p.name, String(p.value)]));
       if (props._booking_addon_for) {
@@ -265,16 +267,25 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
         continue;
       }
       if (!props._booking_type) continue; // plain retail item in the same cart — NAV order flow handles it
+      Object.assign(bookingProperties, props);
+      bookingLineProperties.push(props);
       if (props._booking_type === "RENTAL") {
         lines.push({ type: "RENTAL", productNo: props._product_no, storeId: props._store_id, from: props._from, to: props._to, qty: item.quantity || 1, holdToken: props._hold_token });
       } else if (props._booking_type === "COURSE") {
         lines.push({ type: "COURSE", sessionId: props._session_id, qty: item.quantity || 1, holdToken: props._hold_token });
+      } else if (props._booking_type === "SERVICE") {
+        lines.push({ type: "SERVICE", productNo: props._product_no, storeId: props._store_id, from: props._from, to: props._to, qty: item.quantity || 1, holdToken: props._hold_token });
       }
     }
     if (!lines.length) return;
 
     const isB2B = (order.customer?.tags ?? "").split(",").map((t: string) => t.trim().toUpperCase()).includes("B2B");
     const paid = order.financial_status === "paid"; // B2B pay-later arrives 'pending'
+    const settings = getSettings();
+    const termsAccepted = bookingLineProperties.every((props) => {
+      const key = `terms${props._booking_type[0]}${props._booking_type.slice(1).toLowerCase()}Enabled`;
+      return settings[key] !== "1" || String(props._terms_accepted).toLowerCase() === "true";
+    });
     const booking = await createBooking({
       customer: {
         email: order.email || order.customer?.email || "unknown@web",
@@ -288,9 +299,11 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
       shopifyOrderName: order.name,
       paid,
       holdToken: lines.find((l) => l.holdToken)?.holdToken,
-      intakeResponses: Object.fromEntries(Object.entries(
-        Object.fromEntries((order.line_items ?? []).flatMap((i: any) => (i.properties ?? []).map((p: any) => [p.name, p.value]))),
-      ).filter(([k]) => k.startsWith("_intake_")).map(([k, v]) => [k.slice(8), v])),
+      fieldResponses: Object.fromEntries(Object.entries(bookingProperties)
+        .filter(([key]) => key.startsWith("_field_") || key.startsWith("_intake_"))
+        .map(([key, value]) => [key.startsWith("_field_") ? key.slice(7) : key.slice(8), value])),
+      termsAccepted,
+      enforceTerms: false,
       addons,
     });
     void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
@@ -519,6 +532,38 @@ proxyRouter.get("/service-slots", (req, res) => {
   }
 });
 
+proxyRouter.get("/product-fields", (req, res) => {
+  const productNo = String(req.query.productNo || "").trim();
+  if (!productNo) return res.status(400).json({ error: "productNo required" });
+  const product = db.prepare("SELECT id,min_qty,max_qty FROM products WHERE product_no=?").get(productNo) as
+    { id: string; min_qty: number; max_qty: number } | undefined;
+  if (!product) return res.status(404).json({ error: "Product not found" });
+  const customFields = (db.prepare(`SELECT id,label,type,options,required FROM booking_fields
+    WHERE product_id=? ORDER BY sort,id`).all(product.id) as any[]).map((field) => ({
+    id: field.id,
+    name: field.label,
+    type: field.type,
+    required: !!field.required,
+    placeholder: "",
+    options: pj<string[]>(field.options, []),
+    validation: {},
+  }));
+  const settings = getSettings();
+  res.json({
+    productNo,
+    customFields,
+    quantity: {
+      min: Math.max(1, Number(product.min_qty) || 1),
+      max: Math.max(1, Number(product.max_qty) || 1),
+    },
+    termsEnabled: {
+      RENTAL: settings.termsRentalEnabled === "1",
+      COURSE: settings.termsCourseEnabled === "1",
+      SERVICE: settings.termsServiceEnabled === "1",
+    },
+  });
+});
+
 proxyRouter.post("/bookings", async (req, res) => {
   try {
     const booking = await createBooking({
@@ -540,8 +585,12 @@ proxyRouter.post("/bookings", async (req, res) => {
 
 proxyRouter.get("/quote", (req, res) => {
   try {
-    const { productNo, storeId, from, to, qty } = req.query as Record<string, string>;
-    const q = quoteLines([{ type: "RENTAL", productNo, storeId, from, to, qty: Number(qty) || 1 }]);
+    const { type = "RENTAL", productNo, storeId, from, to, sessionId, qty } = req.query as Record<string, string>;
+    if (!["RENTAL", "COURSE", "SERVICE"].includes(type)) return res.status(400).json({ error: "Invalid booking type" });
+    const q = quoteLines([{
+      type: type as "RENTAL" | "COURSE" | "SERVICE",
+      productNo, storeId, from, to, sessionId, qty: Number(qty) || 1,
+    }]);
     res.json({ ...q, currency: "CAD" });
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message ?? err) });
@@ -599,7 +648,8 @@ proxyRouter.post("/waitlist", (req, res) => {
 
 proxyRouter.post("/holds", async (req, res) => {
   try {
-    const { productNo, sessionId, storeId, from, to, qty = 1 } = req.body ?? {};
+    const { type: requestedType, productNo, sessionId, storeId, from, to, qty = 1 } = req.body ?? {};
+    const type = requestedType || (sessionId ? "COURSE" : "RENTAL");
     if (!productNo || !from || !to) return res.status(400).json({ error: "productNo, from and to are required" });
     const n = Math.max(1, Number(qty) || 1);
     if (sessionId) {
@@ -610,6 +660,19 @@ proxyRouter.post("/holds", async (req, res) => {
         WHERE l.session_id=? AND b.status IN ('RESERVED','POS_PENDING','PAID','PICKED_UP')`).get(sessionId) as any;
       const held = db.prepare("SELECT COALESCE(SUM(qty),0) n FROM booking_holds WHERE session_id=? AND expires_at>?").get(sessionId, now()) as any;
       if (booked.n + held.n + n > session.capacity) return res.status(409).json({ error: "This session no longer has enough seats" });
+    } else if (type === "SERVICE") {
+      const time = String(from).slice(11, 16);
+      if (!storeId || !serviceSlots(productNo, storeId, String(from).slice(0, 10)).slots.includes(time)) {
+        return res.status(409).json({ error: "This service slot is no longer available" });
+      }
+      const capacity = db.prepare(`SELECT COALESCE(q.qty,1) AS qty FROM products p
+        LEFT JOIN product_store_qty q ON q.product_id=p.id AND q.store_id=?
+        WHERE p.product_no=? AND p.type='SERVICE'`).get(storeId, productNo) as { qty: number } | undefined;
+      const held = db.prepare(`SELECT COALESCE(SUM(qty),0) AS n FROM booking_holds
+        WHERE product_no=? AND store_id=? AND date_from=? AND expires_at>?`).get(productNo, storeId, from, now()) as { n: number };
+      if (held.n + n > Math.max(0, Number(capacity?.qty ?? 1))) {
+        return res.status(409).json({ error: "This service slot is no longer available" });
+      }
     } else {
       const availability = await rentalAvailability(productNo, storeId, from, to);
       if (!availability.perDay.every((d) => d.qty >= n)) return res.status(409).json({ error: "This rental is no longer available" });
