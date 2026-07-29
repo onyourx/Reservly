@@ -110,6 +110,7 @@ function serializeProduct(p: any) {
     imageUrl: p.image_url, durationType: p.duration_type, duration: p.duration,
     defaultUnitPrice: p.default_unit_price, securityDeposit: p.security_deposit,
     retailItem: p.retail_item, fixedLocation: p.fixed_location,
+    online: !!p.online,
     availableOnWeb: !!p.available_on_web, minQty: p.min_qty, maxQty: p.max_qty,
     lateFeePerDay: p.late_fee_per_day || 0,
     scheduling: {
@@ -406,7 +407,7 @@ catalogRouter.get("/products/:id/bookings", requirePerm("bookings"), (req, res) 
 catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
-  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSell, crossSellProductNos } = req.body ?? {};
+  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, online, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSell, crossSellProductNos } = req.body ?? {};
   const sku = req.body?.sku === undefined ? null : String(req.body.sku).trim();
   if (p.type === "SERVICE" && securityDeposit != null && Number(securityDeposit) !== 0) {
     return res.status(400).json({ error: "SERVICE security_deposit must be 0" });
@@ -477,11 +478,13 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
      web_desc_fr = COALESCE(?, web_desc_fr), shopify_product_id = COALESCE(?, shopify_product_id),
      sku = COALESCE(?, sku),
      available_on_web = COALESCE(?, available_on_web),
+     online = COALESCE(?, online),
      default_unit_price = COALESCE(?, default_unit_price),
      security_deposit = COALESCE(?, security_deposit),
      late_fee_per_day = COALESCE(?, late_fee_per_day), updated_at = ? WHERE id = ?`,
   ).run(imageUrl ?? null, webDescEn ?? null, webDescFr ?? null, shopifyProductId ?? null, sku,
     availableOnWeb == null ? null : availableOnWeb ? 1 : 0,
+    online == null ? null : online ? 1 : 0,
     defaultUnitPrice == null ? null : Number(defaultUnitPrice),
     securityDeposit == null ? null : Number(securityDeposit),
     lateFeePerDay == null ? null : Number(lateFeePerDay), now(), p.id);
@@ -977,6 +980,7 @@ function serializeSession(s: any) {
     instanceNo: s.instance_no, instanceCount: s.instance_count,
     trainerIds: trainers.map((trainer) => trainer.id),
     trainers,
+    online: s.online ? 1 : 0,
     deliveryMode: s.delivery_mode || "IN_PERSON", meetingUrl: s.meeting_url || "",
     meetingHostUrl: s.meeting_host_url || "", zoomMeetingId: s.zoom_meeting_id || "",
   };
@@ -1000,12 +1004,15 @@ catalogRouter.get("/sessions", (req, res) => {
  *  Tuesday evenings. All instances share seriesId and block room+trainers. */
 catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
   const { productId, startsAt, endsAt, storeId, roomId, trainerIds = [], capacity = 8, occurrences = 1, intervalDays = 7,
-    deliveryMode = "IN_PERSON", meetingUrl = "", createZoom = false } = req.body ?? {};
+    deliveryMode = "IN_PERSON", meetingUrl = "", createZoom = false, online = false } = req.body ?? {};
   if (!productId || !startsAt || !endsAt || !storeId) return res.status(400).json({ error: "productId, startsAt, endsAt, storeId are required" });
   const seriesId = uid();
   const n = Math.max(1, Math.min(12, Number(occurrences) || 1));
   const out: any[] = [];
   const product = db.prepare("SELECT name FROM products WHERE id=?").get(productId) as { name: string } | undefined;
+  const isOnline = online === true || Number(online) === 1;
+  const settings = getSettings();
+  const zoomConfigured = !!(settings.zoomAccountId && settings.zoomClientId && settings.zoomClientSecret);
   const occurrenceTimes = Array.from({ length: n }, (_, i) => {
     const offset = i * (Number(intervalDays) || 7) * 86_400_000;
     return {
@@ -1014,7 +1021,7 @@ catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
     };
   });
   const resourceIds = [
-    ...(roomId ? [String(roomId)] : []),
+    ...(!isOnline && roomId ? [String(roomId)] : []),
     ...((Array.isArray(trainerIds) ? trainerIds : []).map(String)),
   ];
   const localParts = (iso: string) => {
@@ -1050,20 +1057,22 @@ catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
     const occurrenceStart = occurrenceTimes[i].start;
     const occurrenceEnd = occurrenceTimes[i].end;
     let joinUrl = String(meetingUrl || ""), hostUrl = "", zoomId = "";
-    if (createZoom && deliveryMode !== "IN_PERSON") {
+    if (isOnline && createZoom && zoomConfigured) {
       try {
-        const zoom = await createZoomMeeting({ topic: `${product?.name || "Class"}${n > 1 ? ` (${i + 1}/${n})` : ""}`, startsAt: occurrenceStart, endsAt: occurrenceEnd });
+        const date = localParts(occurrenceStart).date;
+        const zoom = await createZoomMeeting({ topic: `${product?.name || "Class"} (${date})`, startsAt: occurrenceStart, endsAt: occurrenceEnd });
         joinUrl = zoom.joinUrl; hostUrl = zoom.startUrl; zoomId = zoom.id;
       } catch (err) {
-        return res.status(502).json({ error: `Zoom meeting creation failed: ${String((err as Error).message || err)}` });
+        console.warn("[sessions] Zoom meeting creation failed for session", { sessionId: id, error: String(err) });
       }
     }
     db.prepare(
       `INSERT INTO sessions (id, product_id, series_id, starts_at, ends_at, store_id, room_id, capacity, instance_no, instance_count,
-        delivery_mode,meeting_url,meeting_host_url,zoom_meeting_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        delivery_mode,meeting_url,meeting_host_url,zoom_meeting_id,online)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, productId, seriesId, occurrenceStart, occurrenceEnd,
-      storeId, roomId ?? null, Number(capacity) || 8, i + 1, n, deliveryMode, joinUrl, hostUrl, zoomId);
+      storeId, isOnline ? null : roomId ?? null, Number(capacity) || 8, i + 1, n, deliveryMode, joinUrl, hostUrl, zoomId,
+      isOnline ? 1 : 0);
     for (const t of trainerIds) db.prepare("INSERT OR IGNORE INTO session_trainers (session_id, resource_id) VALUES (?, ?)").run(id, t);
     out.push(serializeSession(db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)));
   }
@@ -1122,6 +1131,7 @@ catalogRouter.get("/sessions/:id/attendees", (req, res) => {
       endsAt: session.ends_at,
       storeId: session.store_id,
       capacity: session.capacity,
+      meetingUrl: session.meeting_url || "",
     },
     attendees: attendees.map((attendee) => ({
       ...attendee,

@@ -279,7 +279,7 @@ function ScheduleTab() {
                       key={session.id}
                       onClick={() => void openAttendees(session.id)}
                     >
-                      <span>{fmtTime(session.startsAt)} {session.productName ?? session.productNo} ({session.booked}/{session.capacity})</span>
+                      <span>{fmtTime(session.startsAt)} {session.productName ?? session.productNo} ({session.booked}/{session.capacity}){session.online ? " · online" : ""}</span>
                       {(session.roomName || session.trainers.length > 0) && (
                         <span className="session-chip-hint">
                           {[session.roomName, session.trainers.map((trainer) => trainer.name).join(", ")].filter(Boolean).join(" · ")}
@@ -383,6 +383,14 @@ function ScheduleTab() {
           <p className="muted">
             {fmtDateTime(attendeeData.session.startsAt)} · {storeName(attendeeData.session.storeId)} · {attendeeData.attendees.reduce((sum, attendee) => sum + attendee.qty, 0)}/{attendeeData.session.capacity}
           </p>
+          {attendeeData.session.meetingUrl && (
+            <p>
+              <strong>{t("Join online:")}</strong>{" "}
+              <a href={attendeeData.session.meetingUrl} target="_blank" rel="noreferrer">
+                {attendeeData.session.meetingUrl}
+              </a>
+            </p>
+          )}
           <h4>{t("Session attendee roster")}</h4>
           {attendeeData.attendees.length === 0 ? (
             <EmptyState title={t("Attendees")} />

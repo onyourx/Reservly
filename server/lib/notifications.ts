@@ -134,11 +134,18 @@ export async function dispatchDueNotifications() {
           || (isPickup ? DEFAULT_PICKUP_SUBJECT : DEFAULT_RETURN_SUBJECT),
         values,
       );
-      const html = renderTemplate(
+      let html = renderTemplate(
         (isPickup ? settings.reminderPickupTemplate : settings.reminderReturnTemplate)
           || (isPickup ? DEFAULT_PICKUP_TEMPLATE : DEFAULT_RETURN_TEMPLATE),
         values,
       );
+      const meetingUrl = lines
+        .filter((line) => line.session_id)
+        .map((line) => db.prepare("SELECT meeting_url FROM sessions WHERE id=?").get(line.session_id) as { meeting_url: string } | undefined)
+        .find((session) => session?.meeting_url)?.meeting_url || "";
+      if (meetingUrl) {
+        html += `<p><strong>Join online:</strong> <a href="${escapeHtml(meetingUrl)}">${escapeHtml(meetingUrl)}</a></p>`;
+      }
       const sent = await sendMail({
         to: booking.customer_email,
         subject,

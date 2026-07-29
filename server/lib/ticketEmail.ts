@@ -33,6 +33,12 @@ export async function sendClassTicketEmail(bookingId: string): Promise<void> {
   const lines = db.prepare("SELECT * FROM booking_lines WHERE booking_id = ?").all(bookingId) as any[];
   const courseLines = lines.filter((line) => line.type === "COURSE");
   if (!courseLines.length) return;
+  const session = courseLines
+    .map((line) => line.session_id
+      ? db.prepare("SELECT meeting_url FROM sessions WHERE id=?").get(line.session_id) as { meeting_url: string } | undefined
+      : undefined)
+    .find((candidate) => candidate?.meeting_url);
+  const meetingUrl = session?.meeting_url || "";
 
   let pdfBuffer: Buffer | null = null;
   try {
@@ -58,7 +64,7 @@ export async function sendClassTicketEmail(bookingId: string): Promise<void> {
   const text = `Your class ticket
 
 Booking reference: ${booking.ref}
-${sessionText}${storeText}
+${sessionText}${storeText}${meetingUrl ? `\nJoin online: ${meetingUrl}` : ""}
 Total paid: ${paidAmount}
 
 Your ticket is attached — show it at check-in.`;
@@ -74,6 +80,7 @@ Your ticket is attached — show it at check-in.`;
         ${sessions.map((session) => `<li style="margin-bottom:10px"><strong>${escapeHtml(session.name)}</strong><br>${escapeHtml(session.when)}</li>`).join("")}
       </ul>
       ${store?.name ? `<p><strong>Store:</strong> ${escapeHtml(store.name)}</p>` : ""}
+      ${meetingUrl ? `<p><strong>Join online:</strong> <a href="${escapeHtml(meetingUrl)}">${escapeHtml(meetingUrl)}</a></p>` : ""}
       <p><strong>Total paid:</strong> ${escapeHtml(paidAmount)}</p>
       <p style="margin-top:24px">Your ticket is attached — show it at check-in.</p>
     </div>

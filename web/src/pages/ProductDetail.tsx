@@ -42,6 +42,7 @@ export function ProductDetail() {
   const [translations, setTranslations] = useState<ProductTranslation[]>([]);
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(["en", "fr"]);
   const [availableOnWeb, setAvailableOnWeb] = useState(false);
+  const [productOnline, setProductOnline] = useState(false);
   const [shopifyProductId, setShopifyProductId] = useState("");
   const [sku, setSku] = useState("");
   const [kit, setKit] = useState<KitItem[]>([]);
@@ -75,6 +76,7 @@ export function ProductDetail() {
   const [occurrences, setOccurrences] = useState(1);
   const [intervalDays, setIntervalDays] = useState(7);
   const [deliveryMode, setDeliveryMode] = useState<"IN_PERSON" | "VIRTUAL" | "HYBRID">("IN_PERSON");
+  const [sessOnline, setSessOnline] = useState(false);
   const [meetingUrl, setMeetingUrl] = useState("");
   const [createZoom, setCreateZoom] = useState(false);
   const [addingSessions, setAddingSessions] = useState(false);
@@ -93,6 +95,7 @@ export function ProductDetail() {
           { locale: "fr", name: p.nameFr || p.name, description: p.webDescFr || "" },
         ]);
         setAvailableOnWeb(Boolean(p.availableOnWeb));
+        setProductOnline(Boolean(p.online));
         setShopifyProductId(p.shopifyProductId ?? "");
         setSku(p.sku ?? "");
         setKit(p.kit ?? []);
@@ -160,6 +163,7 @@ export function ProductDetail() {
           imageUrl,
           translations,
           availableOnWeb,
+          online: productOnline ? 1 : 0,
           shopifyProductId: shopifyProductId || null,
           sku: sku.trim() || "",
           kit,
@@ -386,6 +390,7 @@ export function ProductDetail() {
           capacity: sessCapacity,
           occurrences: occurrences > 1 ? occurrences : undefined,
           intervalDays: occurrences > 1 ? intervalDays : undefined,
+          online: sessOnline ? 1 : 0,
           deliveryMode,
           meetingUrl: deliveryMode === "IN_PERSON" || createZoom ? undefined : meetingUrl,
           createZoom: deliveryMode === "IN_PERSON" ? false : createZoom,
@@ -564,6 +569,16 @@ export function ProductDetail() {
               />
               Available on web
             </label>
+            {p.type === "SERVICE" && (
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={productOnline}
+                  onChange={(e) => setProductOnline(e.target.checked)}
+                />
+                {t("Online service (video appointment)")}
+              </label>
+            )}
           </div>
           {missingLanguages.length > 0 && (
             <div className="error-note" style={{ marginTop: 12 }}>
@@ -1037,7 +1052,7 @@ export function ProductDetail() {
                         <td>{fmtDateTime(s.startsAt)}</td>
                         <td>{fmtDateTime(s.endsAt)}</td>
                         <td className="muted">{storeName(s.storeId)}</td>
-                        <td><span className="badge">{s.deliveryMode?.replace("_", " ") || "IN PERSON"}</span>{s.meetingUrl && <div><a href={s.meetingUrl} target="_blank" rel="noreferrer">Join link</a></div>}</td>
+                        <td><span className="badge">{s.online ? t("Online session") : s.deliveryMode?.replace("_", " ") || "IN PERSON"}</span>{s.meetingUrl && <div><a href={s.meetingUrl} target="_blank" rel="noreferrer">{t("Join online:")}</a></div>}</td>
                         <td className="muted">
                           {s.seriesId ? `${s.instanceNo}/${s.instanceCount}` : "—"}
                         </td>
@@ -1079,7 +1094,7 @@ export function ProductDetail() {
                 </select>
               </Field>
               <Field label="Room">
-                <select value={sessRoom} onChange={(e) => {
+                <select value={sessRoom} disabled={sessOnline} onChange={(e) => {
                   const nextRoomId = e.target.value;
                   setSessRoom(nextRoomId);
                   const room = rooms.find((candidate) => candidate.id === nextRoomId);
@@ -1092,7 +1107,16 @@ export function ProductDetail() {
                     </option>
                   ))}
                 </select>
+                {sessOnline && <div className="faint">{t("Online — no room needed")}</div>}
               </Field>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={sessOnline}
+                  onChange={(e) => setSessOnline(e.target.checked)}
+                />
+                {t("Online session")}
+              </label>
               <Field label="Delivery">
                 <select value={deliveryMode} onChange={(e) => setDeliveryMode(e.target.value as typeof deliveryMode)}>
                   <option value="IN_PERSON">In person</option><option value="VIRTUAL">Virtual</option><option value="HYBRID">Hybrid</option>
@@ -1120,7 +1144,7 @@ export function ProductDetail() {
                 />
                 {(() => {
                   const room = rooms.find((candidate) => candidate.id === sessRoom);
-                  return room && room.capacity > 0 && sessCapacity > room.capacity
+                  return !sessOnline && room && room.capacity > 0 && sessCapacity > room.capacity
                     ? <div style={{ color: "#9a6700", fontSize: 12, marginTop: 4 }}>{t("Exceeds room capacity")} ({room.capacity})</div>
                     : null;
                 })()}

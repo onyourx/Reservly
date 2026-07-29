@@ -99,6 +99,7 @@ export interface Product {
   retailItem: string;
   fixedLocation: string;
   availableOnWeb: boolean;
+  online?: boolean;
   minQty: number;
   maxQty: number;
   shopifyProductId: string | null;
@@ -150,6 +151,7 @@ export interface Session {
   instanceNo: number;
   instanceCount: number;
   productName?: string;
+  online?: number;
   deliveryMode: "IN_PERSON" | "VIRTUAL" | "HYBRID";
   meetingUrl: string;
   meetingHostUrl: string;
@@ -377,6 +379,7 @@ export interface SessionAttendees {
     endsAt: string;
     storeId: string;
     capacity: number;
+    meetingUrl: string;
   };
   attendees: SessionAttendee[];
 }

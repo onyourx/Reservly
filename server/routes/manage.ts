@@ -10,6 +10,9 @@ import { refundQuote, validateRentalWindow } from "../lib/policy.js";
 
 export const manageRouter = Router();
 
+const esc = (v: unknown) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const isHttpUrl = (v: unknown) => /^https?:\/\/.+/i.test(String(v ?? ""));
+
 function rowFor(token: string) {
   if (!token || token.length < 20) return null;
   return db.prepare("SELECT * FROM bookings WHERE manage_token=?").get(token) as any;
@@ -64,19 +67,24 @@ manageRouter.get("/:token", (req, res) => {
   const settings = getSettings();
   const extensionsEnabled = settings.extensionsEnabled === "1";
   const extendable = extensionsEnabled && ["RESERVED", "PAID", "PICKED_UP", "RETURNED"].includes(booking.status);
-  const lines = booking.lines.map((l: any) =>
-    `<li><strong>${l.productName}</strong><br>${new Date(l.from).toLocaleString("en-CA")} → ${new Date(l.to).toLocaleString("en-CA")}
+  const lines = booking.lines.map((l: any) => {
+    const joinLink = l.meetingUrl && isHttpUrl(l.meetingUrl) ? `
+      <div style="margin-top:12px">
+        <a href="${esc(l.meetingUrl)}" target="_blank" style="display:inline-block; padding:10px 16px; background:#12A46B; color:#fff; text-decoration:none; border-radius:4px; font-weight:600">Join online session</a>
+      </div>` : "";
+    return `<li><strong>${esc(l.productName)}</strong><br>${new Date(l.from).toLocaleString("en-CA")} → ${new Date(l.to).toLocaleString("en-CA")}
+      ${joinLink}
       ${extendable && l.type === "RENTAL" ? `
       <div style="margin-top:20px; padding:10px; background:#f5f5f5; border-radius:4px">
-        <h3>Extend rental: ${l.productName}</h3>
+        <h3>Extend rental: ${esc(l.productName)}</h3>
         <p>Current return: <strong>${l.to.slice(0, 10)}</strong></p>
-        <input id="ext_${l.id}_date" type="date" min="${new Date(new Date(l.to).getTime() + 86_400_000).toISOString().slice(0, 10)}" required>
-        <button onclick="extQuote('${l.id}')">Check price</button>
-        <p id="ext_${l.id}_quote"></p>
-        <button id="ext_${l.id}_submit" style="display:none" onclick="extSubmit('${l.id}')">Request extension</button>
+        <input id="ext_${esc(l.id)}_date" type="date" min="${new Date(new Date(l.to).getTime() + 86_400_000).toISOString().slice(0, 10)}" required>
+        <button onclick="extQuote('${esc(l.id)}')">Check price</button>
+        <p id="ext_${esc(l.id)}_quote"></p>
+        <button id="ext_${esc(l.id)}_submit" style="display:none" onclick="extSubmit('${esc(l.id)}')">Request extension</button>
       </div>` : ""}
-    </li>`,
-  ).join("");
+    </li>`;
+  }).join("");
   const extensionRequests = extensionsEnabled ? `
     <div id="requests" style="margin-top:20px">
       <h3>Extension requests</h3>
@@ -92,14 +100,14 @@ manageRouter.get("/:token", (req, res) => {
         </div>
         <form id="move" hidden onsubmit="move(event)" style="margin-top:18px">
           <h2>Choose new dates</h2>
-          <select id="line">${booking.lines.map((l: any) => `<option value="${l.id}">${l.productName}</option>`).join("")}</select>
+          <select id="line">${booking.lines.map((l: any) => `<option value="${esc(l.id)}">${esc(l.productName)}</option>`).join("")}</select>
           <input id="from" type="datetime-local" required>
           <input id="to" type="datetime-local" required>
           <button type="submit">Request reschedule</button>
         </form>`;
   res.send(page(`Manage ${booking.ref}`, `
     <h1>Manage booking ${booking.ref}</h1>
-    <p>${booking.customer.firstName} ${booking.customer.lastName}</p>
+    <p>${esc(booking.customer.firstName)} ${esc(booking.customer.lastName)}</p>
     <ul style="line-height:1.7">${lines}</ul>${extensionRequests}${actions}
     <p id="status"></p>
     <script>

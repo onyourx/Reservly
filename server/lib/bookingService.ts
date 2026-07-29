@@ -10,6 +10,7 @@ import { emit } from "./events.js";
 import { scheduleBookingReminders } from "./notifications.js";
 import { validateRentalWindow } from "./policy.js";
 import { serviceSlots } from "../engine/availability.js";
+import { createZoomMeeting } from "./zoom.js";
 
 export interface CustomerIn {
   email: string; firstName?: string; lastName?: string; phone?: string; b2b?: boolean;
@@ -187,6 +188,27 @@ export async function createBooking(input: {
     }
   }
 
+  const onlineServiceLine = quoted.lines.find((line) => {
+    if (line.type !== "SERVICE") return false;
+    const product = db.prepare("SELECT online FROM products WHERE product_no=?").get(line.productNo) as { online: number } | undefined;
+    return !!product?.online;
+  });
+  const zoomConfigured = !!(settings.zoomAccountId && settings.zoomClientId && settings.zoomClientSecret);
+  if (onlineServiceLine && zoomConfigured) {
+    const onlineProduct = db.prepare("SELECT name FROM products WHERE product_no=?")
+      .get(onlineServiceLine.productNo) as { name: string } | undefined;
+    try {
+      const zoom = await createZoomMeeting({
+        topic: `${onlineProduct?.name || onlineServiceLine.productName} - ${input.customer.firstName || "Class"}`,
+        startsAt: onlineServiceLine.from,
+        endsAt: onlineServiceLine.to,
+      });
+      db.prepare("UPDATE bookings SET meeting_url=? WHERE id=?").run(zoom.joinUrl, id);
+    } catch (err) {
+      console.warn("[bookingService] Zoom meeting creation failed for booking", { bookingId: id, error: String(err) });
+    }
+  }
+
   if (input.holdToken) db.prepare("DELETE FROM booking_holds WHERE token=?").run(input.holdToken);
   if (input.addons?.length) {
     const insertAddon = db.prepare(`INSERT INTO booking_addons(id,booking_id,addon_product_no,name,qty,unit_price,shopify_variant_id)
@@ -231,6 +253,7 @@ export function serializeBooking(id: string) {
       sellingItem: l.selling_item, inspectionOut: l.inspection_out, inspectionIn: l.inspection_in,
       damages: pj(l.damages, [] as any[]),
       checklist,
+      ...(l.type === "SERVICE" ? { meetingUrl: b.meeting_url || "" } : {}),
       ...(l.session_id ? (() => {
         const session = db.prepare("SELECT delivery_mode,meeting_url FROM sessions WHERE id=?").get(l.session_id) as any;
         return { deliveryMode: session?.delivery_mode || "IN_PERSON", meetingUrl: session?.meeting_url || "" };

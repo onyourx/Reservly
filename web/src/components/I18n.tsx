@@ -128,6 +128,11 @@ const messages: Record<UiLanguage, Messages> = {
     "Add window": "Add window", "Block time": "Block time", Reason: "Reason",
     "Existing windows": "Existing windows", "Existing blocks": "Existing blocks",
     "Exceeds room capacity": "Exceeds room capacity",
+    "Online session": "Online session",
+    "Online service (video appointment)": "Online service (video appointment)",
+    "Online — no room needed": "Online — no room needed",
+    "Join online:": "Join online:",
+    "Online service": "Online service",
   },
   fr: {
     Currency: "Devise",
@@ -310,6 +315,11 @@ const messages: Record<UiLanguage, Messages> = {
     "Add window": "Ajouter une plage", "Block time": "Bloquer une plage", Reason: "Raison",
     "Existing windows": "Plages existantes", "Existing blocks": "Blocages existants",
     "Exceeds room capacity": "Dépasse la capacité de la salle",
+    "Online session": "Séance en ligne",
+    "Online service (video appointment)": "Service en ligne (rendez-vous vidéo)",
+    "Online — no room needed": "En ligne — aucune salle requise",
+    "Join online:": "Rejoindre en ligne :",
+    "Online service": "Service en ligne",
   },
   es: {
     Currency: "Moneda",
@@ -488,6 +498,11 @@ const messages: Record<UiLanguage, Messages> = {
     "Add window": "Añadir franja", "Block time": "Bloquear horario", Reason: "Motivo",
     "Existing windows": "Franjas existentes", "Existing blocks": "Bloqueos existentes",
     "Exceeds room capacity": "Supera la capacidad de la sala",
+    "Online session": "Sesión en línea",
+    "Online service (video appointment)": "Servicio en línea (cita por video)",
+    "Online — no room needed": "En línea — no se necesita sala",
+    "Join online:": "Unirse en línea:",
+    "Online service": "Servicio en línea",
   },
 };
 

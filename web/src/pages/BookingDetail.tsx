@@ -660,6 +660,12 @@ export function BookingDetail() {
                   <td>
                     <div style={{ fontWeight: 600 }}>{l.productName}</div>
                     <div className="faint mono">{l.productNo}</div>
+                    {l.type === "SERVICE" && l.meetingUrl && (
+                      <div>
+                        <strong>{t("Join online:")}</strong>{" "}
+                        <a href={l.meetingUrl} target="_blank" rel="noreferrer">{l.meetingUrl}</a>
+                      </div>
+                    )}
                   </td>
                   <td className="muted">
                     {l.type === "RENTAL"
