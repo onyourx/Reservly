@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
-import { unlink } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -51,12 +51,7 @@ export function consumePrintToken(t: string): boolean {
   }
 }
 
-export async function printDocument(docPath: string, printerId: string): Promise<string> {
-  const { printers } = await listPrinters();
-  if (!printers.some((printer) => printer.id === printerId)) {
-    throw Object.assign(new Error(`Unknown printer: ${printerId}`), { status: 400 });
-  }
-
+export async function renderDocumentPdf(docPath: string): Promise<Buffer> {
   const tmpfile = path.join(os.tmpdir(), `print-${crypto.randomBytes(12).toString("hex")}.pdf`);
   const separator = docPath.includes("?") ? "&" : "?";
   const port = process.env.PORT || "4646";
@@ -75,6 +70,23 @@ export async function printDocument(docPath: string, printerId: string): Promise
     } catch (err) {
       throw new Error(`Failed to render print document: ${(err as Error).message}`);
     }
+
+    return await readFile(tmpfile);
+  } finally {
+    await unlink(tmpfile).catch(() => undefined);
+  }
+}
+
+export async function printDocument(docPath: string, printerId: string): Promise<string> {
+  const { printers } = await listPrinters();
+  if (!printers.some((printer) => printer.id === printerId)) {
+    throw Object.assign(new Error(`Unknown printer: ${printerId}`), { status: 400 });
+  }
+
+  const tmpfile = path.join(os.tmpdir(), `print-${crypto.randomBytes(12).toString("hex")}.pdf`);
+
+  try {
+    await writeFile(tmpfile, await renderDocumentPdf(docPath));
 
     try {
       const { stdout } = await execFileAsync("lp", ["-d", printerId, tmpfile]);

@@ -189,7 +189,8 @@ CREATE TABLE IF NOT EXISTS bookings (
   contract_signed_at TEXT,
   notes TEXT DEFAULT '',
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  ticket_emailed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS booking_lines (
@@ -453,6 +454,7 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE bookings ADD COLUMN reschedule_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE bookings ADD COLUMN id_photo_ref TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN id_photo_at TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN ticket_emailed_at TEXT",
     "ALTER TABLE product_addons ADD COLUMN shopify_variant_id TEXT NOT NULL DEFAULT ''",
   ]) {
     try {

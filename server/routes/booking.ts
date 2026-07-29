@@ -18,6 +18,7 @@ import { listPrinters, printDocument } from "../lib/printing.js";
 import { refundQuote, validateRentalWindow } from "../lib/policy.js";
 import { deleteIdPhoto, fetchIdPhoto, sftpConfigured, uploadIdPhoto } from "../lib/idPhotos.js";
 import { DATA_DIR } from "../lib/platform.js";
+import { sendClassTicketEmail } from "../lib/ticketEmail.js";
 
 export const bookingRouter = Router();
 
@@ -397,6 +398,7 @@ bookingRouter.post("/bookings/:id/reconcile", requirePerm("bookings"), (req, res
     if (!Number.isFinite(posTotal)) return res.status(400).json({ error: "posTotal (number) is required" });
     db.prepare("UPDATE bookings SET pos_total = ?, pos_receipt_no = COALESCE(NULLIF(?, ''), pos_receipt_no), status = CASE WHEN status IN ('RESERVED','POS_PENDING') THEN 'PAID' ELSE status END, updated_at = ? WHERE id = ?")
       .run(posTotal, String(req.body?.receiptNo ?? ""), now(), b.id);
+    void sendClassTicketEmail(b.id).catch((err) => console.warn("[ticketEmail]", err));
     emit(b.id, "booking.reconciled", { posTotal, originalTotal: b.total });
     res.json({ booking: serializeBooking(b.id) });
   } catch (err: any) {

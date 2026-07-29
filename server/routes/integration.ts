@@ -19,6 +19,7 @@ import { BookingValidationError, createBooking } from "../lib/bookingService.js"
 import { quoteLines } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
 import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhotos.js";
+import { sendClassTicketEmail } from "../lib/ticketEmail.js";
 
 export const settingsRouter = Router();
 export const shopifyRouter = Router(); // mounted at /webhooks/shopify with raw body
@@ -274,7 +275,7 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
 
     const isB2B = (order.customer?.tags ?? "").split(",").map((t: string) => t.trim().toUpperCase()).includes("B2B");
     const paid = order.financial_status === "paid"; // B2B pay-later arrives 'pending'
-    await createBooking({
+    const booking = await createBooking({
       customer: {
         email: order.email || order.customer?.email || "unknown@web",
         firstName: order.customer?.first_name, lastName: order.customer?.last_name,
@@ -292,6 +293,7 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
       ).filter(([k]) => k.startsWith("_intake_")).map(([k, v]) => [k.slice(8), v])),
       addons,
     });
+    void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
   } catch (err) {
     db.prepare("INSERT INTO events (booking_id, type, detail, at) VALUES (NULL, 'shopify.order_failed', ?, ?)")
       .run(JSON.stringify({ orderId: order?.id, error: String(err) }), new Date().toISOString());

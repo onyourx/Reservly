@@ -26,6 +26,7 @@ export async function sendMail(opts: {
   subject: string;
   text: string;
   html?: string;
+  attachments?: { filename: string; content: Buffer }[];
 }): Promise<boolean> {
   const t = getTransport();
   if (!t) {
@@ -40,6 +41,7 @@ export async function sendMail(opts: {
       subject: opts.subject,
       text: opts.text,
       html: opts.html,
+      attachments: opts.attachments,
     });
     console.log(`[mailer] sent "${opts.subject}" to ${opts.to}`);
     return true;
