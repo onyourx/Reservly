@@ -21,6 +21,7 @@ const EMPTY = {
   pickupEarliestTime: "", returnByTime: "", rentalIncrementUnit: "day", rentalIncrementValue: "1",
   extensionsEnabled: "", extensionApproval: "manual",
   noShowFeeMode: "off", noShowFeeValue: "0",
+  shippingFeeDefault: "0", shipBufferPricePerDay: "0", shipReturnAddress: "",
   termsRentalEnabled: "", termsCourseEnabled: "", termsServiceEnabled: "",
   termsRentalHtml: "", termsCourseHtml: "", termsServiceHtml: "",
   termsRentalPdf: "", termsCoursePdf: "", termsServicePdf: "",
@@ -601,6 +602,39 @@ export function SettingsPage() {
                   : `${t("$")}${settings.noShowFeeValue || "0"} ${t("per booking")}`}
             </div>
           </>, 4)}
+        </div>
+        <div className="card">
+          <h2 className="card-title">{t("shipping_defaults_title")}</h2>
+          {fields(<>
+            <Field label={t("shipping_fee_default_label")}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={settings.shippingFeeDefault}
+                onChange={(e) => set("shippingFeeDefault", e.target.value)}
+              />
+            </Field>
+            <Field label={t("shipping_buffer_price_label")}>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={settings.shipBufferPricePerDay}
+                onChange={(e) => set("shipBufferPricePerDay", e.target.value)}
+              />
+            </Field>
+            <Field
+              label={t("shipping_return_address_label")}
+              hint={t("shipping_return_address_hint")}
+            >
+              <textarea
+                rows={4}
+                value={settings.shipReturnAddress}
+                onChange={(e) => set("shipReturnAddress", e.target.value)}
+              />
+            </Field>
+          </>, 3)}
         </div>
         <div className="card">
           <h2 className="card-title">{t("Booking times & increments")}</h2>

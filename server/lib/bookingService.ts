@@ -40,6 +40,9 @@ export async function createBooking(input: {
   fieldResponses?: Record<string, unknown>;
   termsAccepted?: boolean;
   enforceTerms?: boolean;
+  enforceShipping?: boolean;
+  fulfillment?: "PICKUP" | "SHIP" | string;
+  shipAddress?: string;
   addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId?: string }[];
 }) {
   if (!input.customer?.email) throw new Error("customer.email is required");
@@ -114,6 +117,58 @@ export async function createBooking(input: {
 
   const settings = getSettings();
   const ref = newRef();
+  let fulfillment = input.fulfillment === "SHIP" ? "SHIP" : "PICKUP";
+  const shipAddress = String(input.shipAddress ?? "").trim();
+  const rentalLines = quoted.lines.filter((line) => line.type === "RENTAL");
+  let shippingFee = 0;
+  let bufferCharge = 0;
+  if (fulfillment === "SHIP") {
+    if (!shipAddress) {
+      if (input.enforceShipping !== false) {
+        throw new BookingValidationError({ error: "bad_request", message: "shipping address required" });
+      }
+      auditLog("shipping.address_missing_on_paid_order", ref);
+      console.warn("[bookingService] Missing shipping address on paid order; creating booking as PICKUP", {
+        bookingRef: ref,
+        shopifyOrderId: input.shopifyOrderId,
+      });
+      fulfillment = "PICKUP";
+    }
+  }
+  if (fulfillment === "SHIP") {
+    const rentalProductNos = [...new Set(rentalLines.map((line) => line.productNo))];
+    const products = rentalProductNos.length
+      ? db.prepare(`SELECT product_no,shipping_enabled,shipping_fee,ship_buffer_before_days,ship_buffer_after_days
+          FROM products WHERE product_no IN (${rentalProductNos.map(() => "?").join(",")})`)
+        .all(...rentalProductNos) as any[]
+      : [];
+    const byProductNo = new Map(products.map((product) => [product.product_no, product]));
+    if (rentalProductNos.some((productNo) => !byProductNo.get(productNo)?.shipping_enabled)) {
+      if (input.enforceShipping !== false) {
+        throw new BookingValidationError({ error: "shipping_unavailable" });
+      }
+      auditLog("shipping.unavailable_on_paid_order", ref);
+      console.warn("[bookingService] Shipping unavailable on paid order; creating booking as PICKUP", {
+        bookingRef: ref,
+        shopifyOrderId: input.shopifyOrderId,
+        productNos: rentalProductNos,
+      });
+      fulfillment = "PICKUP";
+    }
+    if (fulfillment === "SHIP") {
+      const defaultShippingFee = Math.max(0, Number(settings.shippingFeeDefault) || 0);
+      shippingFee = round2(rentalProductNos.reduce((sum, productNo) => {
+        const fee = Number(byProductNo.get(productNo)?.shipping_fee) || 0;
+        return sum + (fee > 0 ? fee : defaultShippingFee);
+      }, 0));
+      const bufferPricePerDay = Math.max(0, Number(settings.shipBufferPricePerDay) || 0);
+      bufferCharge = round2(rentalLines.reduce((sum, line) => {
+        const product = byProductNo.get(line.productNo);
+        return sum + (Math.max(0, Number(product?.ship_buffer_before_days) || 0)
+          + Math.max(0, Number(product?.ship_buffer_after_days) || 0)) * bufferPricePerDay;
+      }, 0));
+    }
+  }
   const termsTypes = [...new Set(quoted.lines.map((line) => line.type.toLowerCase()))]
     .filter((type) => settings[`terms${type[0].toUpperCase()}${type.slice(1)}Enabled`] === "1");
   if (termsTypes.length && input.termsAccepted !== true) {
@@ -128,7 +183,8 @@ export async function createBooking(input: {
     });
   }
   const addonTotal = round2((input.addons || []).reduce((sum, a) => sum + (Number(a.unitPrice) || 0) * Math.max(1, Number(a.qty) || 1), 0));
-  const commerceTotal = round2(quoted.subtotal + addonTotal);
+  const commerceSubtotal = round2(quoted.subtotal + addonTotal);
+  const commerceTotal = round2(commerceSubtotal + shippingFee + bufferCharge);
 
   const types = new Set(quoted.lines.map((l) => l.type));
   const type = types.size > 1 ? "MIXED" : [...types][0];
@@ -139,15 +195,17 @@ export async function createBooking(input: {
   db.prepare(
     `INSERT INTO bookings (id, ref, type, status, channel, store_id, customer_email, customer_first,
        customer_last, customer_phone, customer_b2b, subtotal, deposit, total, currency,
-       shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, terms_accepted_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, terms_accepted_at,
+       fulfillment, ship_address, shipping_fee, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, ref, type, status, input.channel, input.storeId ?? null,
     input.customer.email, input.customer.firstName ?? "", input.customer.lastName ?? "",
     input.customer.phone ?? "", input.customer.b2b ? 1 : 0,
-    commerceTotal, quoted.deposit, commerceTotal, settings.currency || "CAD",
+    commerceSubtotal, quoted.deposit, commerceTotal, settings.currency || "CAD",
     input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "", manageToken,
-    j(storedResponses), input.termsAccepted === true ? now() : null, now(), now(),
+    j(storedResponses), input.termsAccepted === true ? now() : null,
+    fulfillment, fulfillment === "SHIP" ? shipAddress : "", shippingFee, now(), now(),
   );
 
   for (const line of quoted.lines) {
@@ -217,7 +275,10 @@ export async function createBooking(input: {
       Number(addon.unitPrice) || 0, addon.shopifyVariantId || "");
   }
 
-  emit(id, "booking.created", { ref, type, channel: input.channel, email: input.customer.email, total: commerceTotal, addonTotal });
+  emit(id, "booking.created", {
+    ref, type, channel: input.channel, email: input.customer.email, total: commerceTotal,
+    addonTotal, fulfillment, shippingFee, bufferCharge,
+  });
   const publicUrl = (getSettings().publicUrl || process.env.PUBLIC_URL || "").replace(/\/+$/, "");
   emit(id, "booking.management_link_created", {
     email: input.customer.email,
@@ -275,6 +336,8 @@ export function serializeBooking(id: string) {
       phone: b.customer_phone, b2b: !!b.customer_b2b,
     },
     lines, subtotal: b.subtotal, deposit: b.deposit, total: b.total, posTotal: b.pos_total,
+    fulfillment: b.fulfillment || "PICKUP", shipAddress: b.ship_address || "",
+    shippingFee: Number(b.shipping_fee || 0),
     refundDue: b.refund_due, currency: b.currency, posReceiptNo: b.pos_receipt_no,
     shopifyOrderId: b.shopify_order_id, shopifyOrderName: b.shopify_order_name,
     idOnFile: !!b.id_encrypted, idLast4: b.id_encrypted ? idLast4(b.id_encrypted) : "",

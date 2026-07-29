@@ -34,6 +34,11 @@
     var termsAccepted = false;
     var quantityMin = 1;
     var quantityMax = 1;
+    var shippingEnabled = false;
+    var shippingFee = 0;
+    var shipBufferBeforeDays = 0;
+    var shipBufferAfterDays = 0;
+    var shipBufferPricePerDay = 0;
     var configuredAddons = [];
     var shopifyCrossSell = [];
     var stores = [];
@@ -51,10 +56,23 @@
       session: null,
       serviceTime: "",
       qty: 1,
+      fulfillment: "PICKUP",
+      shipAddress: "",
     };
     var today = localDate(new Date());
     var view = new Date();
     view = new Date(view.getFullYear(), view.getMonth(), 1);
+
+    function t(key) {
+      var values = {
+        fulfillment: root.dataset.i18nFulfillment || "Fulfillment",
+        pickup: root.dataset.i18nPickup || "Pick up",
+        ship: root.dataset.i18nShip || "Ship to me",
+        address: root.dataset.i18nAddress || "Shipping Address",
+        shippingFee: root.dataset.i18nShippingFee || "Shipping",
+      };
+      return values[key] || key;
+    }
 
     root.querySelector(".gsl-timezone").textContent =
       "Times shown in " + (Intl.DateTimeFormat().resolvedOptions().timeZone || "your local timezone");
@@ -207,6 +225,11 @@
         termsRequired = !!(data.termsEnabled && data.termsEnabled[type]);
         quantityMin = Math.max(1, Number(data.quantity && data.quantity.min) || 1);
         quantityMax = Math.max(quantityMin, Number(data.quantity && data.quantity.max) || quantityMin);
+        shippingEnabled = type === "RENTAL" && !!data.shippingEnabled;
+        shippingFee = Number(data.shippingFee) || 0;
+        shipBufferBeforeDays = Number(data.shipBufferBeforeDays) || 0;
+        shipBufferAfterDays = Number(data.shipBufferAfterDays) || 0;
+        shipBufferPricePerDay = Number(data.shipBufferPricePerDay) || 0;
         selected.qty = quantityMin;
         detailsNeeded = customFields.length > 0 || termsRequired || configuredAddons.length > 0 || quantityMax > quantityMin;
         if (step !== 1) step = detailsNeeded ? 2 : 3;
@@ -258,13 +281,17 @@
         nextBtn.disabled = !quote;
       } else {
         var total = quote && quote.lines && quote.lines[0] ? quote.lines[0].lineTotal : quote && quote.subtotal;
+        if (type === "RENTAL" && selected.fulfillment === "SHIP") {
+          total += shippingFee + (shipBufferBeforeDays + shipBufferAfterDays) * shipBufferPricePerDay;
+        }
         nextBtn.textContent = "Add to cart — " + money(total);
         nextBtn.disabled = submitting;
       }
     }
 
     function selectionComplete() {
-      if (type === "RENTAL") return !!(selected.storeId && selected.start && selected.end);
+      if (type === "RENTAL") return !!(selected.storeId && selected.start && selected.end
+        && (selected.fulfillment !== "SHIP" || selected.shipAddress.trim()));
       if (type === "COURSE") return !!selected.session;
       return !!(selected.storeId && selected.date && selected.serviceTime);
     }
@@ -416,6 +443,36 @@
 
     function renderRentalPanel(panel) {
       panel.appendChild(el("h3", "", "Your rental"));
+      if (shippingEnabled) {
+        var fulfillment = el("div", "gsl-custom-field");
+        fulfillment.appendChild(el("div", "gsl-field-label", t("fulfillment")));
+        ["PICKUP", "SHIP"].forEach(function (value) {
+          var choice = el("label", "gsl-check-row");
+          var radio = el("input");
+          radio.type = "radio";
+          radio.name = "gsl-fulfillment";
+          radio.value = value;
+          radio.checked = selected.fulfillment === value;
+          radio.addEventListener("change", function () {
+            selected.fulfillment = value;
+            renderWhen();
+          });
+          choice.appendChild(radio);
+          choice.appendChild(document.createTextNode(value === "SHIP" ? t("ship") : t("pickup")));
+          fulfillment.appendChild(choice);
+        });
+        if (selected.fulfillment === "SHIP") {
+          var address = el("textarea");
+          address.required = true;
+          address.value = selected.shipAddress;
+          address.addEventListener("input", function () {
+            selected.shipAddress = address.value;
+            updateNavigation();
+          });
+          fulfillment.appendChild(field(t("address"), address));
+        }
+        panel.appendChild(fulfillment);
+      }
       if (!selected.start) {
         panel.appendChild(el("p", "gsl-empty", "Choose a pick-up date on the calendar."));
         return;
@@ -742,6 +799,11 @@
       } else {
         addSummary(summary, "Appointment", readableDate(selected.date) + " at " + readableTime(selected.serviceTime));
       }
+      if (type === "RENTAL" && selected.fulfillment === "SHIP") {
+        addSummary(summary, t("fulfillment"), t("ship"));
+        addSummary(summary, t("address"), selected.shipAddress);
+        addSummary(summary, t("shippingFee"), money(shippingFee));
+      }
       addSummary(summary, "Quantity", String(selected.qty));
       customFields.forEach(function (definition) {
         var value = fieldResponses[definition.id];
@@ -749,6 +811,9 @@
       });
       if (termsRequired) addSummary(summary, "Terms", termsAccepted ? "✓ Accepted" : "Not accepted");
       var total = quote && quote.lines && quote.lines[0] ? quote.lines[0].lineTotal : 0;
+      if (type === "RENTAL" && selected.fulfillment === "SHIP") {
+        total += shippingFee + (shipBufferBeforeDays + shipBufferAfterDays) * shipBufferPricePerDay;
+      }
       addSummary(summary, "Total", money(total), "gsl-confirm-total");
       if (shopifyCrossSell.length) {
         var crossSellBox = el("div", "gsl-cross-sell");
@@ -790,6 +855,8 @@
       form.querySelector(".gsl-p-from").value = quote.lines[0].from || params.from || "";
       form.querySelector(".gsl-p-to").value = quote.lines[0].to || params.to || "";
       form.querySelector(".gsl-p-terms").value = termsAccepted ? "true" : "false";
+      form.querySelector(".gsl-p-fulfillment").value = selected.fulfillment;
+      form.querySelector(".gsl-p-ship-address").value = selected.fulfillment === "SHIP" ? selected.shipAddress.trim() : "";
       form.querySelector(".gsl-p-label").value = type === "RENTAL"
         ? readableDate(selected.start) + " → " + readableDate(selected.end)
         : readableDate((selected.session && selected.session.date) || selected.date) + " at "

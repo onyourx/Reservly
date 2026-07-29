@@ -558,6 +558,8 @@ export function BookingNew() {
   const [totals, setTotals] = useState<Quote | null>(null);
   const [totalsBusy, setTotalsBusy] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [fulfillment, setFulfillment] = useState<"PICKUP" | "SHIP">("PICKUP");
+  const [shipAddress, setShipAddress] = useState("");
   const [customerLookup, setCustomerLookup] = useState<"loading" | "shopify" | "local" | "new" | null>(null);
   const customerLookupSequence = useRef(0);
 
@@ -629,6 +631,25 @@ export function BookingNew() {
     () => products.filter((product) => basketProductNos.includes(product.productNo)),
     [products, basketProductNosKey],
   );
+  const rentalBasketLines = basket.filter((line) => line.ql.type === "RENTAL");
+  const selectedRentalProducts = selectedProducts.filter((product) => product.type === "RENTAL");
+  const canShip = rentalBasketLines.length > 0
+    && selectedRentalProducts.length > 0
+    && selectedRentalProducts.every((product) => product.shippingEnabled === true);
+  useEffect(() => {
+    if (!canShip && fulfillment === "SHIP") setFulfillment("PICKUP");
+  }, [canShip, fulfillment]);
+  const shippingFee = fulfillment === "SHIP"
+    ? selectedRentalProducts.reduce((sum, product) =>
+      sum + ((Number(product.shippingFee) || 0) || (Number(settings.shippingFeeDefault) || 0)), 0)
+    : 0;
+  const bufferCharge = fulfillment === "SHIP"
+    ? rentalBasketLines.reduce((sum, line) => {
+      const product = products.find((candidate) => candidate.productNo === line.productNo);
+      return sum + ((Number(product?.shipBufferBeforeDays) || 0) + (Number(product?.shipBufferAfterDays) || 0))
+        * (Number(settings.shipBufferPricePerDay) || 0);
+    }, 0)
+    : 0;
   const bookingFields = useMemo(() => {
     const byId = new Map<string, BookingField>();
     selectedProducts.forEach((product) => {
@@ -650,6 +671,7 @@ export function BookingNew() {
   });
   const termsOk = termsTypes.length === 0 || termsAccepted;
   const canCreate = customerOk && bookingStoreId !== "" && basket.length > 0 &&
+    (fulfillment !== "SHIP" || shipAddress.trim() !== "") &&
     requiredFieldsOk && termsOk && !creating;
 
   const handleQuickAddCrossSell = (suggestion: CrossSellSuggestion) => {
@@ -727,6 +749,8 @@ export function BookingNew() {
           lines: basket.map((b) => b.ql),
           fieldResponses,
           termsAccepted: termsTypes.length > 0 ? true : undefined,
+          fulfillment,
+          shipAddress: fulfillment === "SHIP" ? shipAddress.trim() : undefined,
         },
       });
       toast.success(`Booking ${booking.ref} created`);
@@ -737,7 +761,7 @@ export function BookingNew() {
     }
   };
 
-  const grandTotal = totals ? totals.subtotal + totals.deposit : null;
+  const grandTotal = totals ? totals.subtotal + totals.deposit + shippingFee + bufferCharge : null;
 
   return (
     <div className="page">
@@ -828,6 +852,27 @@ export function BookingNew() {
       </div>
 
       <div style={{ height: 18 }} />
+      {canShip && (
+        <div className="card">
+          <h2 className="card-title">{t("fulfillment_label")}</h2>
+          <div className="btn-row">
+            <label className="checkbox-row">
+              <input type="radio" name="fulfillment" checked={fulfillment === "PICKUP"} onChange={() => setFulfillment("PICKUP")} />
+              {t("fulfillment_pickup")}
+            </label>
+            <label className="checkbox-row">
+              <input type="radio" name="fulfillment" checked={fulfillment === "SHIP"} onChange={() => setFulfillment("SHIP")} />
+              {t("fulfillment_ship")}
+            </label>
+          </div>
+          {fulfillment === "SHIP" && (
+            <Field label={t("shipping_address_label")} hint={!shipAddress.trim() ? t("shipping_address_required") : undefined}>
+              <textarea required value={shipAddress} onChange={(event) => setShipAddress(event.target.value)} />
+            </Field>
+          )}
+        </div>
+      )}
+      {canShip && <div style={{ height: 18 }} />}
       {(bookingFields.length > 0 || termsTypes.length > 0) && (
         <>
           <div className="card">
@@ -988,6 +1033,18 @@ export function BookingNew() {
                 <span className="meta-label">Deposit</span>
                 <span>{totals ? money(totals.deposit) : "—"}</span>
               </div>
+              {fulfillment === "SHIP" && (
+                <>
+                  <div className="meta-item">
+                    <span className="meta-label">{t("shipping_fee_label")}</span>
+                    <span>{money(shippingFee)}</span>
+                  </div>
+                  <div className="meta-item">
+                    <span className="meta-label">{t("buffer_charge_label")}</span>
+                    <span>{money(bufferCharge)}</span>
+                  </div>
+                </>
+              )}
               <div className="meta-item">
                 <span className="meta-label">Total</span>
                 <span className="basket-total">

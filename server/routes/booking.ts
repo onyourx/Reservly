@@ -211,6 +211,8 @@ bookingRouter.post("/bookings", requirePerm("bookings"), async (req, res) => {
       lines: req.body?.lines ?? [],
       fieldResponses: req.body?.fieldResponses,
       termsAccepted: req.body?.termsAccepted,
+      fulfillment: req.body?.fulfillment,
+      shipAddress: req.body?.shipAddress,
     });
     const settings = getSettings();
     const isConfigured = settings.shopifyShop?.trim() && settings.shopifyApiSecret;

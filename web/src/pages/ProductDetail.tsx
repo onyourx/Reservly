@@ -49,6 +49,10 @@ export function ProductDetail() {
   const [defaultUnitPrice, setDefaultUnitPrice] = useState("0");
   const [securityDeposit, setSecurityDeposit] = useState("0");
   const [lateFeePerDay, setLateFeePerDay] = useState("0");
+  const [shippingEnabled, setShippingEnabled] = useState(false);
+  const [shippingFee, setShippingFee] = useState("0");
+  const [shipBufferBeforeDays, setShipBufferBeforeDays] = useState("0");
+  const [shipBufferAfterDays, setShipBufferAfterDays] = useState("0");
   const [priceTiers, setPriceTiers] = useState<{ description: string; price: number }[]>([]);
   const [addons, setAddons] = useState<ProductAddon[]>([]);
   const [crossSell, setCrossSell] = useState<CrossSellSuggestion[]>([]);
@@ -102,6 +106,10 @@ export function ProductDetail() {
         setDefaultUnitPrice(String(p.defaultUnitPrice ?? 0));
         setSecurityDeposit(String(p.securityDeposit ?? 0));
         setLateFeePerDay(String(p.lateFeePerDay ?? 0));
+        setShippingEnabled(Boolean(p.shippingEnabled));
+        setShippingFee(String(p.shippingFee ?? 0));
+        setShipBufferBeforeDays(String(p.shipBufferBeforeDays ?? 0));
+        setShipBufferAfterDays(String(p.shipBufferAfterDays ?? 0));
         setPriceTiers(p.prices ?? []);
         setAddons(p.addons ?? []);
         setCrossSell(p.crossSell ?? []);
@@ -170,6 +178,10 @@ export function ProductDetail() {
           defaultUnitPrice: Number(defaultUnitPrice) || 0,
           securityDeposit: Number(securityDeposit) || 0,
           lateFeePerDay: Number(lateFeePerDay) || 0,
+          shippingEnabled,
+          shippingFee: Number(shippingFee) || 0,
+          shipBufferBeforeDays: Math.max(0, Number(shipBufferBeforeDays) || 0),
+          shipBufferAfterDays: Math.max(0, Number(shipBufferAfterDays) || 0),
           ...(p.type !== "SERVICE" ? { prices: priceTiers } : {}),
           addons,
           crossSell,
@@ -515,6 +527,36 @@ export function ProductDetail() {
           )}
         </div>
       </div>
+
+      {p.type === "RENTAL" && (
+        <div className="card" style={{ marginBottom: 18 }}>
+          <h2 className="card-title">{t("product_shipping_title")}</h2>
+          <label className="checkbox-row">
+            <input type="checkbox" checked={shippingEnabled} onChange={(event) => setShippingEnabled(event.target.checked)} />
+            {t("product_shipping_toggle")}
+          </label>
+          {shippingEnabled && (
+            <>
+              <div className="form-grid-3" style={{ marginTop: 14 }}>
+                <Field label={t("product_shipping_fee")}>
+                  <input type="number" min={0} step="0.01" value={shippingFee} onChange={(event) => setShippingFee(event.target.value)} />
+                </Field>
+                <Field label={t("product_shipping_buffer_before")}>
+                  <input type="number" min={0} step={1} value={shipBufferBeforeDays} onChange={(event) => setShipBufferBeforeDays(event.target.value)} />
+                </Field>
+                <Field label={t("product_shipping_buffer_after")}>
+                  <input type="number" min={0} step={1} value={shipBufferAfterDays} onChange={(event) => setShipBufferAfterDays(event.target.value)} />
+                </Field>
+              </div>
+              <div className="faint">
+                {t("product_shipping_buffer_hint")
+                  .replace("[N]", String(Math.max(0, Number(shipBufferBeforeDays) || 0)))
+                  .replace("[N]", String(Math.max(0, Number(shipBufferAfterDays) || 0)))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="grid-2">
         <div className="card">

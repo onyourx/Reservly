@@ -174,6 +174,33 @@ printRouter.get("/packing-list/:id", (req, res) => {
   res.send(page(`Packing list ${b.ref}`, packingBody(b), pageOpts(req)));
 });
 
+printRouter.get("/return-label/:id", (req, res) => {
+  const b = serializeBooking(req.params.id);
+  const rentals = b?.lines.filter((line: any) => line.type === "RENTAL") ?? [];
+  if (!b || b.fulfillment !== "SHIP" || !rentals.length) {
+    return res.status(404).send("Return label not found");
+  }
+  const returnAddress = getSettings().shipReturnAddress || "";
+  const customerName = `${b.customer.firstName} ${b.customer.lastName}`.trim() || b.customer.email;
+  const returnBy = rentals[0].to;
+  res.send(page(`Return Label — ${b.ref}`, `
+    <h1>Return Label — ${esc(b.ref)}</h1>
+    <div class="meta">
+      <div style="min-width:280px"><b>Return to</b><div style="white-space:pre-line">${esc(returnAddress)}</div></div>
+      <div style="min-width:280px"><b>Customer</b>${esc(customerName)}<br>
+        <div style="white-space:pre-line">${esc(b.shipAddress)}</div></div>
+    </div>
+    <div class="box" style="text-align:center">
+      <code style="font-size:20px;font-weight:700">${esc(b.ref)}</code>
+      <div>${barcode(b.ref)}</div>
+    </div>
+    <h2>Equipment</h2>
+    <table><tr><th>Item</th><th>Qty</th></tr>
+      ${rentals.map((line: any) => `<tr><td>${esc(line.productName)}<div class="small">${esc(line.productNo)}</div></td><td>${line.qty}</td></tr>`).join("")}
+    </table>
+    <p style="font-size:18px;font-weight:700">Return by ${esc(dt(returnBy))}</p>`, pageOpts(req)));
+});
+
 printRouter.get("/confirmation/:id", (req, res) => {
   const b = serializeBooking(req.params.id);
   if (!b) return res.status(404).send("Booking not found");

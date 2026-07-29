@@ -96,6 +96,10 @@ export interface Product {
   defaultUnitPrice: number;
   securityDeposit: number;
   lateFeePerDay: number;
+  shippingEnabled?: boolean;
+  shippingFee?: number;
+  shipBufferBeforeDays?: number;
+  shipBufferAfterDays?: number;
   retailItem: string;
   fixedLocation: string;
   availableOnWeb: boolean;
@@ -330,6 +334,9 @@ export interface Booking {
   subtotal: number;
   deposit: number;
   total: number;
+  fulfillment?: "PICKUP" | "SHIP";
+  shipAddress?: string;
+  shippingFee?: number;
   posTotal: number | null;
   refundDue?: number;
   addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId: string }[];
@@ -493,6 +500,9 @@ export interface Settings {
   sftpPort?: string;
   sftpUser?: string;
   sftpPath?: string;
+  shippingFeeDefault?: string;
+  shipReturnAddress?: string;
+  shipBufferPricePerDay?: string;
   /** Write-only: accepted on PUT, never returned by GET. */
   navPassword?: string;
   shopifyApiSecret?: string;

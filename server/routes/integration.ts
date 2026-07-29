@@ -28,7 +28,7 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-export const SAFE_KEYS = ["currency", "navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupEnabled", "reminderReturnEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml"];
+export const SAFE_KEYS = ["currency", "navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupEnabled", "reminderReturnEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml", "shippingFeeDefault", "shipReturnAddress", "shipBufferPricePerDay"];
 
 settingsRouter.get("/health", (_req, res) => {
   res.json({
@@ -323,7 +323,10 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
         .map(([key, value]) => [key.startsWith("_field_") ? key.slice(7) : key.slice(8), value])),
       termsAccepted,
       enforceTerms: false,
+      enforceShipping: false,
       addons,
+      fulfillment: bookingProperties._fulfillment,
+      shipAddress: bookingProperties._ship_address,
     });
     void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
   } catch (err) {
@@ -556,8 +559,10 @@ proxyRouter.get("/product-fields", (req, res) => {
   const requestedLocale = String(req.query.locale || "").trim().toLowerCase();
   const locale = requestedLocale === "en" ? "" : requestedLocale;
   if (!productNo) return res.status(400).json({ error: "productNo required" });
-  const product = db.prepare("SELECT id,min_qty,max_qty FROM products WHERE product_no=?").get(productNo) as
-    { id: string; min_qty: number; max_qty: number } | undefined;
+  const product = db.prepare(`SELECT id,min_qty,max_qty,shipping_enabled,shipping_fee,
+    ship_buffer_before_days,ship_buffer_after_days FROM products WHERE product_no=?`).get(productNo) as
+    { id: string; min_qty: number; max_qty: number; shipping_enabled: number; shipping_fee: number;
+      ship_buffer_before_days: number; ship_buffer_after_days: number } | undefined;
   if (!product) return res.status(404).json({ error: "Product not found" });
   const customFields = (db.prepare(`SELECT id,label,type,options,required FROM booking_fields
     WHERE product_id=? ORDER BY sort,id`).all(product.id) as any[]).map((field) => {
@@ -593,6 +598,11 @@ proxyRouter.get("/product-fields", (req, res) => {
       COURSE: settings.termsCourseEnabled === "1",
       SERVICE: settings.termsServiceEnabled === "1",
     },
+    shippingEnabled: !!product.shipping_enabled,
+    shippingFee: Number(product.shipping_fee) || Number(settings.shippingFeeDefault) || 0,
+    shipBufferBeforeDays: Number(product.ship_buffer_before_days) || 0,
+    shipBufferAfterDays: Number(product.ship_buffer_after_days) || 0,
+    shipBufferPricePerDay: Number(settings.shipBufferPricePerDay) || 0,
   });
 });
 
@@ -608,6 +618,8 @@ proxyRouter.post("/bookings", async (req, res) => {
       termsAccepted: req.body?.termsAccepted,
       holdToken: req.body?.holdToken,
       addons: req.body?.addons,
+      fulfillment: req.body?.fulfillment,
+      shipAddress: req.body?.shipAddress,
     });
     res.json({ booking });
   } catch (err) {

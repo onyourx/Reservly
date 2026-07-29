@@ -48,8 +48,14 @@ export async function rentalAvailability(productNo: string, storeId: string, fro
       .prepare(
         `SELECT COALESCE(SUM(l.qty), 0) AS n FROM booking_lines l
          JOIN bookings b ON b.id = l.booking_id
+         JOIN products p ON p.product_no = l.product_no
          WHERE l.product_no = ? AND l.store_id = ? AND b.status IN ${ACTIVE}
-           AND date(l.date_from) <= date(?) AND date(l.date_to) >= date(?)`,
+           AND date(CASE WHEN b.fulfillment = 'SHIP'
+             THEN date(l.date_from, '-' || p.ship_buffer_before_days || ' days')
+             ELSE date(l.date_from) END) <= date(?)
+           AND date(CASE WHEN b.fulfillment = 'SHIP'
+             THEN date(l.date_to, '+' || p.ship_buffer_after_days || ' days')
+             ELSE date(l.date_to) END) >= date(?)`,
       )
       .get(productNo, storeId, date, date) as { n: number };
     const held = db.prepare(

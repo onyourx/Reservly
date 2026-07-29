@@ -321,6 +321,13 @@ export function BookingDetail() {
               <span className="meta-label">Channel</span>
               <span>{b.channel}</span>
             </div>
+            <div className="meta-item">
+              <span className="meta-label">{t("fulfillment_label")}</span>
+              <span>{t(b.fulfillment === "SHIP" ? "fulfillment_ship" : "fulfillment_pickup")}</span>
+              {b.fulfillment === "SHIP" && b.shipAddress && (
+                <span className="faint" style={{ whiteSpace: "pre-line" }}>{b.shipAddress}</span>
+              )}
+            </div>
             {b.shopifyOrderId && (
               <div className="meta-item">
                 <span className="meta-label">Shopify order</span>
@@ -546,6 +553,11 @@ export function BookingDetail() {
             Print packing list
           </a>
         )}
+        {hasRentals && b.fulfillment === "SHIP" && (
+          <a className="btn btn-sm" href={`/print/return-label/${b.id}`} target="_blank" rel="noreferrer">
+            {t("print_return_label")}
+          </a>
+        )}
         {hasCourses && (
           <>
             <a className="btn btn-sm" href={`/print/confirmation/${b.id}`} target="_blank" rel="noreferrer">
@@ -717,6 +729,12 @@ export function BookingDetail() {
             <span className="muted">Deposit</span>
             <span>{money(b.deposit, b.currency)}</span>
           </div>
+          {b.fulfillment === "SHIP" && (
+            <div className="fin-row">
+              <span className="muted">{t("shipping_fee_label")}</span>
+              <span>{money(b.shippingFee ?? 0, b.currency)}</span>
+            </div>
+          )}
           <div className="fin-row total">
             <span>Total</span>
             <span>{money(b.total, b.currency)}</span>

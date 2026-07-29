@@ -497,6 +497,13 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE product_cross_sell ADD COLUMN price REAL DEFAULT 0",
     "ALTER TABLE product_cross_sell ADD COLUMN image_url TEXT DEFAULT ''",
     "ALTER TABLE product_cross_sell ADD COLUMN handle TEXT DEFAULT ''",
+    "ALTER TABLE products ADD COLUMN shipping_enabled INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN shipping_fee REAL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN ship_buffer_before_days INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE products ADD COLUMN ship_buffer_after_days INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE bookings ADD COLUMN fulfillment TEXT NOT NULL DEFAULT 'PICKUP'",
+    "ALTER TABLE bookings ADD COLUMN ship_address TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN shipping_fee REAL NOT NULL DEFAULT 0",
   ]) {
     try {
       d.exec(stmt);
@@ -602,6 +609,9 @@ const SETTING_DEFAULTS: Record<string, string> = {
   sftpPassword: "",
   sftpPasswordEnc: "",
   sftpPath: "/reservly-ids",
+  shippingFeeDefault: "0",
+  shipReturnAddress: "",
+  shipBufferPricePerDay: "0",
 };
 
 export function getSettings(): Record<string, string> {

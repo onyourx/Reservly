@@ -113,6 +113,10 @@ function serializeProduct(p: any) {
     online: !!p.online,
     availableOnWeb: !!p.available_on_web, minQty: p.min_qty, maxQty: p.max_qty,
     lateFeePerDay: p.late_fee_per_day || 0,
+    shippingEnabled: !!p.shipping_enabled,
+    shippingFee: Number(p.shipping_fee) || 0,
+    shipBufferBeforeDays: Number(p.ship_buffer_before_days) || 0,
+    shipBufferAfterDays: Number(p.ship_buffer_after_days) || 0,
     scheduling: {
       bufferBefore: p.buffer_before || 0, bufferAfter: p.buffer_after || 0,
       minNoticeHours: p.min_notice_hours || 0, maxAdvanceDays: p.max_advance_days || 365,
@@ -407,7 +411,7 @@ catalogRouter.get("/products/:id/bookings", requirePerm("bookings"), (req, res) 
 catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
-  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, online, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSell, crossSellProductNos } = req.body ?? {};
+  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, online, defaultUnitPrice, securityDeposit, lateFeePerDay, shippingEnabled, shippingFee, shipBufferBeforeDays, shipBufferAfterDays, prices, scheduling, addons, crossSell, crossSellProductNos } = req.body ?? {};
   const sku = req.body?.sku === undefined ? null : String(req.body.sku).trim();
   if (p.type === "SERVICE" && securityDeposit != null && Number(securityDeposit) !== 0) {
     return res.status(400).json({ error: "SERVICE security_deposit must be 0" });
@@ -481,13 +485,23 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
      online = COALESCE(?, online),
      default_unit_price = COALESCE(?, default_unit_price),
      security_deposit = COALESCE(?, security_deposit),
-     late_fee_per_day = COALESCE(?, late_fee_per_day), updated_at = ? WHERE id = ?`,
+     late_fee_per_day = COALESCE(?, late_fee_per_day),
+     shipping_enabled = COALESCE(?, shipping_enabled),
+     shipping_fee = COALESCE(?, shipping_fee),
+     ship_buffer_before_days = COALESCE(?, ship_buffer_before_days),
+     ship_buffer_after_days = COALESCE(?, ship_buffer_after_days),
+     updated_at = ? WHERE id = ?`,
   ).run(imageUrl ?? null, webDescEn ?? null, webDescFr ?? null, shopifyProductId ?? null, sku,
     availableOnWeb == null ? null : availableOnWeb ? 1 : 0,
     online == null ? null : online ? 1 : 0,
     defaultUnitPrice == null ? null : Number(defaultUnitPrice),
     securityDeposit == null ? null : Number(securityDeposit),
-    lateFeePerDay == null ? null : Number(lateFeePerDay), now(), p.id);
+    lateFeePerDay == null ? null : Number(lateFeePerDay),
+    shippingEnabled == null || p.type !== "RENTAL" ? null : shippingEnabled ? 1 : 0,
+    shippingFee == null || p.type !== "RENTAL" ? null : Math.max(0, Number(shippingFee) || 0),
+    shipBufferBeforeDays == null || p.type !== "RENTAL" ? null : Math.max(0, Math.trunc(Number(shipBufferBeforeDays) || 0)),
+    shipBufferAfterDays == null || p.type !== "RENTAL" ? null : Math.max(0, Math.trunc(Number(shipBufferAfterDays) || 0)),
+    now(), p.id);
   if (scheduling && typeof scheduling === "object") {
     db.prepare(`UPDATE products SET buffer_before=?,buffer_after=?,min_notice_hours=?,max_advance_days=?,
       cancellation_hours=?,customer_can_cancel=?,customer_can_reschedule=?,deposit_policy=?,updated_at=? WHERE id=?`)

@@ -1,0 +1,12 @@
+{
+  "booking_widget": {
+    "rental_title": "Réserver cette location",
+    "course_title": "Choisir une date de cours",
+    "add_to_cart": "Ajouter la réservation au panier",
+    "gsl_fulfillment_title": "Mode de remise",
+    "gsl_fulfillment_pickup": "Ramassage",
+    "gsl_fulfillment_ship": "Expédier chez moi",
+    "gsl_shipping_address": "Adresse d’expédition",
+    "gsl_shipping_fee": "Expédition"
+  }
+}

@@ -16,6 +16,11 @@
     data-product-title="{{ product.title | escape }}"
     data-locale="{{ request.locale.iso_code | escape }}"
     data-proxy="/apps/booking"
+    data-i18n-fulfillment="{{ 'booking_widget.gsl_fulfillment_title' | t | escape }}"
+    data-i18n-pickup="{{ 'booking_widget.gsl_fulfillment_pickup' | t | escape }}"
+    data-i18n-ship="{{ 'booking_widget.gsl_fulfillment_ship' | t | escape }}"
+    data-i18n-address="{{ 'booking_widget.gsl_shipping_address' | t | escape }}"
+    data-i18n-shipping-fee="{{ 'booking_widget.gsl_shipping_fee' | t | escape }}"
   >
     <button type="button" class="gsl-launch">
       {% case btype %}
@@ -61,6 +66,8 @@
       <input type="hidden" name="properties[_session_id]" class="gsl-p-session">
       <input type="hidden" name="properties[_hold_token]" class="gsl-p-hold">
       <input type="hidden" name="properties[_terms_accepted]" class="gsl-p-terms" value="false">
+      <input type="hidden" name="properties[_fulfillment]" class="gsl-p-fulfillment" value="PICKUP">
+      <input type="hidden" name="properties[_ship_address]" class="gsl-p-ship-address">
       <input type="hidden" name="properties[Booking]" class="gsl-p-label">
     </form>
   </div>
