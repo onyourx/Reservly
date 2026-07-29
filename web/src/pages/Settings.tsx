@@ -83,7 +83,10 @@ export function SettingsPage() {
   const [termsBusy, setTermsBusy] = useState<string | null>(null);
 
   type Hook = { id: string; url: string; events: string[]; active: boolean; lastStatus: string; hasSecret: boolean };
+  type WebhookPreset = { name: string; label: string; events: string[] };
   const [hooks, setHooks] = useState<Hook[]>([]);
+  const [hookPresets, setHookPresets] = useState<WebhookPreset[]>([]);
+  const [hookPresetsError, setHookPresetsError] = useState(false);
   const [hookUrl, setHookUrl] = useState("");
   const [hookEvents, setHookEvents] = useState("*");
   const [hookSecret, setHookSecret] = useState("");
@@ -99,6 +102,28 @@ export function SettingsPage() {
     api<{ webhooks: Hook[] }>("/api/webhooks").then((d) => setHooks(d.webhooks)).catch(() => setHooks([]));
   }, []);
   useEffect(loadHooks, [loadHooks]);
+  useEffect(() => {
+    api<{ presets: WebhookPreset[] }>("/api/webhook-presets")
+      .then((data) => {
+        setHookPresets(Array.isArray(data.presets) ? data.presets : []);
+        setHookPresetsError(false);
+      })
+      .catch(() => {
+        setHookPresets([]);
+        setHookPresetsError(true);
+      });
+  }, []);
+
+  const parsedHookEvents = (value: string) =>
+    value.trim() === "*" ? ["*"] : value.split(",").map((item) => item.trim()).filter(Boolean);
+  const matchingHookPreset = (events: string[]) => {
+    const normalized = Array.from(new Set(events)).sort();
+    return hookPresets.find((preset) => {
+      const presetEvents = Array.from(new Set(preset.events)).sort();
+      return normalized.length === presetEvents.length
+        && normalized.every((event, index) => event === presetEvents[index]);
+    }) ?? null;
+  };
 
   const refreshStores = useCallback(async () => {
     setStoresLoading(true);
@@ -262,7 +287,7 @@ export function SettingsPage() {
     try {
       await api("/api/webhooks", { body: {
         url: hookUrl,
-        events: hookEvents.trim() === "*" ? ["*"] : hookEvents.split(",").map((item) => item.trim()).filter(Boolean),
+        events: parsedHookEvents(hookEvents),
         secret: hookSecret || undefined,
       } });
       setHookUrl(""); setHookSecret(""); toast.success("Webhook added"); loadHooks();
@@ -687,12 +712,23 @@ export function SettingsPage() {
         <h2 className="card-title">Outbound webhooks</h2>
         <div className="faint" style={{ marginBottom: 10 }}>Every <span className="mono">booking.*</span> event is POSTed with the full booking snapshot — point Conduit (or any system) here. Events: created, pos_pushed, reconciled, picked_up, returned, completed, cancelled, signature_requested, contract_signed. Use <span className="mono">*</span> for all; bodies are HMAC-signed (<span className="mono">X-Booking-Signature</span>) when a secret is set.</div>
         {hooks.map((hook) => <div key={hook.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #eef" }}>
-          <div style={{ flex: 1, minWidth: 0 }}><div className="mono" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{hook.url}</div><div className="faint" style={{ fontSize: 11 }}>{hook.events.join(", ")}{hook.hasSecret ? " · signed" : ""}{hook.lastStatus ? ` · last: ${hook.lastStatus}` : ""}</div></div>
+          <div style={{ flex: 1, minWidth: 0 }}><div className="mono" style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>{hook.url}</div><div className="faint" style={{ fontSize: 11 }}>{matchingHookPreset(hook.events) ? t(matchingHookPreset(hook.events)!.label) : `${t("Custom")} (${hook.events.length} events)`} · {hook.events.join(", ")}{hook.hasSecret ? " · signed" : ""}{hook.lastStatus ? ` · last: ${hook.lastStatus}` : ""}</div></div>
           <button type="button" className="btn btn-sm" onClick={() => void testHook(hook.id)}>Test</button>
           <button type="button" className="icon-btn" aria-label="Delete webhook" onClick={() => void deleteHook(hook.id)}>×</button>
         </div>)}
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
           <input type="url" placeholder="https://conduit.example.com/api/pub/hooks/bookings" value={hookUrl} onChange={(e) => setHookUrl(e.target.value)} />
+          <Field label={t("Webhook preset")}><select
+            value={matchingHookPreset(parsedHookEvents(hookEvents))?.name ?? ""}
+            onChange={(e) => {
+              const preset = hookPresets.find((item) => item.name === e.target.value);
+              if (preset) setHookEvents(preset.events.join(", "));
+            }}
+          >
+            <option value="">{t("Custom")}</option>
+            {hookPresets.map((preset) => <option key={preset.name} value={preset.name}>{t(preset.label)}</option>)}
+          </select></Field>
+          {hookPresetsError && <ErrorNote message={t("Webhook presets could not be loaded. You can still enter events manually.")} />}
           <div style={{ display: "flex", gap: 8 }}><input placeholder="Events (* or comma-separated)" value={hookEvents} onChange={(e) => setHookEvents(e.target.value)} style={{ flex: 1 }} /><input type="password" placeholder="Secret (optional)" value={hookSecret} onChange={(e) => setHookSecret(e.target.value)} style={{ flex: 1 }} autoComplete="new-password" /></div>
           <button type="button" className="btn" disabled={!hookUrl} onClick={() => void addHook()}>Add webhook</button>
         </div>

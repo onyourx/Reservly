@@ -6,6 +6,7 @@ import { createDraftInvoice } from "./shopifyAdmin.js";
 import { serializeBooking } from "./bookingService.js";
 import { scheduleBookingReminders } from "./notifications.js";
 import { validateRentalWindow } from "./policy.js";
+import { emit } from "./events.js";
 
 export interface ExtensionRequest {
   id: string;
@@ -76,10 +77,12 @@ export async function requestExtension(bookingId: string, lineId: string, newDat
   if (!(await checkExtensionAvailability(line, newDateTo))) throw new Error("Requested dates are no longer available");
   const id = uid();
   const at = now();
+  const price = priceExtension(line, newDateTo);
   db.prepare(`INSERT INTO extension_requests
     (id,booking_id,line_id,old_date_to,new_date_to,price,status,created_at,updated_at)
     VALUES (?,?,?,?,?,?,'REQUESTED',?,?)`)
-    .run(id, bookingId, lineId, line.date_to, newDateTo, priceExtension(line, newDateTo), at, at);
+    .run(id, bookingId, lineId, line.date_to, newDateTo, price, at, at);
+  emit(bookingId, "extension.requested", { requestId: id, lineId, newDateTo, price });
   if (settings.extensionApproval === "auto") return approveExtension(id);
   return serializeExtension(extensionRow(id));
 }
@@ -135,6 +138,7 @@ export async function approveExtension(requestId: string): Promise<ExtensionRequ
   db.prepare(`UPDATE extension_requests SET status='APPROVED',shopify_draft_order_id=?,
     invoice_url=?,decided_at=?,updated_at=? WHERE id=?`)
     .run(draft?.draftOrderId || "", draft?.invoiceUrl || "", at, at, requestId);
+  emit(booking.id, "extension.approved", { requestId, price: request.price, invoiceUrl: draft?.invoiceUrl || "" });
   const payment = draft?.invoiceUrl ? `Payment link: ${draft.invoiceUrl}` : "Contact the store to complete payment";
   await sendMail({
     to: booking.customer_email,
@@ -152,6 +156,7 @@ export async function rejectExtension(requestId: string, reason?: string): Promi
   if (!booking) throw new Error("Booking not found");
   const at = now();
   db.prepare("UPDATE extension_requests SET status='REJECTED',decided_at=?,updated_at=? WHERE id=?").run(at, at, requestId);
+  emit(booking.id, "extension.rejected", { requestId, reason: reason || "" });
   const detail = reason || "Contact the store for details";
   await sendMail({
     to: booking.customer_email,
@@ -177,6 +182,7 @@ export async function applyPaidExtension(requestId: string): Promise<void> {
     db.prepare("DELETE FROM booking_holds WHERE session_id=?").run(request.id);
     db.prepare("UPDATE extension_requests SET status='APPLIED',paid_at=?,updated_at=? WHERE id=?").run(at, at, requestId);
   })();
+  emit(booking.id, "extension.applied", { requestId, newDateTo: request.new_date_to });
   auditLog("rental.extension_applied", booking.ref, booking.customer_email, "system");
   scheduleBookingReminders(booking.id);
   await sendMail({

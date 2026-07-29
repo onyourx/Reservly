@@ -20,6 +20,7 @@ import { quoteLines } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
 import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhotos.js";
 import { sendClassTicketEmail } from "../lib/ticketEmail.js";
+import { getAllEmittedEvents, PRESETS } from "../lib/webhookPresets.js";
 
 export const settingsRouter = Router();
 export const shopifyRouter = Router(); // mounted at /webhooks/shopify with raw body
@@ -170,6 +171,13 @@ settingsRouter.post("/webhooks/:id/test", requireOwner, async (req, res) => {
   const { dispatchWebhooks } = await import("../lib/webhooks.js");
   dispatchWebhooks("booking.test", { bookingId: null, detail: { ping: true }, booking: null });
   res.json({ ok: true, note: "test event dispatched; lastStatus updates shortly" });
+});
+
+settingsRouter.get("/webhook-presets", requireOwner, (_req, res) => {
+  res.json({
+    presets: Object.entries(PRESETS).map(([name, preset]) => ({ name, ...preset })),
+    allEvents: getAllEmittedEvents(),
+  });
 });
 
 settingsRouter.get("/audit", requireOwner, (req, res) => {
