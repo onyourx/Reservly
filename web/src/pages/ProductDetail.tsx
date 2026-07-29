@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
-import type { BookingField, Health, KitItem, Product, ProductAddon, ProductTranslation, Resource, Session, Settings } from "../api";
+import { api, qs } from "../api";
+import type { BookingField, CrossSellSuggestion, Health, KitItem, Product, ProductAddon, ProductTranslation, Resource, Session, Settings } from "../api";
 import { fmtDateTime, localToISO, money } from "../format";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
@@ -50,9 +50,15 @@ export function ProductDetail() {
   const [lateFeePerDay, setLateFeePerDay] = useState("0");
   const [priceTiers, setPriceTiers] = useState<{ description: string; price: number }[]>([]);
   const [addons, setAddons] = useState<ProductAddon[]>([]);
-  const [crossSellProductNos, setCrossSellProductNos] = useState<string[]>([]);
+  const [crossSell, setCrossSell] = useState<CrossSellSuggestion[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [crossSellSelection, setCrossSellSelection] = useState("");
+  const [shopifyProducts, setShopifyProducts] = useState<Array<{
+    id: string; title: string; handle: string; image: string; price: number; variantId: string;
+  }>>([]);
+  const [shopifySearchQuery, setShopifySearchQuery] = useState("");
+  const [shopifySearchLoading, setShopifySearchLoading] = useState(false);
+  const [shopifyConfigured, setShopifyConfigured] = useState<boolean | null>(null);
   const [storeQtyInputs, setStoreQtyInputs] = useState<Record<string, string>>({});
   const [savingStoreQty, setSavingStoreQty] = useState(false);
 
@@ -94,7 +100,7 @@ export function ProductDetail() {
         setLateFeePerDay(String(p.lateFeePerDay ?? 0));
         setPriceTiers(p.prices ?? []);
         setAddons(p.addons ?? []);
-        setCrossSellProductNos((p.crossSell ?? []).map((suggestion) => suggestion.productNo));
+        setCrossSell(p.crossSell ?? []);
         setStoreQtyInputs(Object.fromEntries(
           (p.storeQty ?? []).map((entry) => [entry.storeId, String(entry.qty)]),
         ));
@@ -121,6 +127,29 @@ export function ProductDetail() {
       .catch(() => setAllProducts([]));
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setShopifySearchLoading(true);
+      api<{ products: typeof shopifyProducts; configured: boolean }>(
+        `/api/shopify/products${qs({ q: shopifySearchQuery })}`,
+        { signal: controller.signal },
+      ).then((result) => {
+        setShopifyConfigured(result.configured);
+        setShopifyProducts(result.products);
+      }).catch((searchError: Error) => {
+        if (searchError.name !== "AbortError") {
+          setShopifyProducts([]);
+          setShopifyConfigured(false);
+        }
+      }).finally(() => setShopifySearchLoading(false));
+    }, shopifySearchQuery ? 300 : 0);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [shopifySearchQuery]);
+
   const save = async () => {
     setSaving(true);
     try {
@@ -138,7 +167,7 @@ export function ProductDetail() {
           lateFeePerDay: Number(lateFeePerDay) || 0,
           ...(p.type !== "SERVICE" ? { prices: priceTiers } : {}),
           addons,
-          crossSellProductNos: crossSellProductNos.length ? crossSellProductNos : null,
+          crossSell,
         },
       });
       setProduct((prev) => (prev ? { ...prev, ...updated, sessions: prev.sessions } : updated));
@@ -712,14 +741,31 @@ export function ProductDetail() {
 
           <hr className="divider" />
           <h2 className="card-title">{t("Suggested with this product")}</h2>
-          {crossSellProductNos.map((productNo) => {
-            const suggestion = allProducts.find((candidate) => candidate.productNo === productNo)
-              ?? product?.crossSell?.find((candidate) => candidate.productNo === productNo);
+          {crossSell.map((suggestion) => {
+            const reservlyProduct = suggestion.kind === "RESERVLY"
+              ? allProducts.find((candidate) => candidate.productNo === suggestion.productNo)
+              : undefined;
+            const key = suggestion.kind === "SHOPIFY"
+              ? `SHOPIFY:${suggestion.shopifyProductId}`
+              : `RESERVLY:${suggestion.productNo}`;
             return (
-              <div className="btn-row" key={productNo} style={{ justifyContent: "space-between", marginBottom: 8 }}>
-                <span>{suggestion?.name ?? productNo}</span>
+              <div className="btn-row" key={key} style={{ justifyContent: "space-between", marginBottom: 8 }}>
+                <div className="btn-row">
+                  <span className="badge">{suggestion.kind === "SHOPIFY" ? "Shopify" : "Reservly"}</span>
+                  {suggestion.kind === "SHOPIFY" && suggestion.imageUrl && (
+                    <img src={suggestion.imageUrl} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 4 }} />
+                  )}
+                  <span>
+                    {suggestion.kind === "SHOPIFY"
+                      ? `${suggestion.title ?? ""} · ${money(suggestion.price ?? 0)}`
+                      : reservlyProduct?.name ?? suggestion.name ?? suggestion.productNo}
+                  </span>
+                </div>
                 <button type="button" className="btn btn-ghost btn-sm"
-                  onClick={() => setCrossSellProductNos((current) => current.filter((value) => value !== productNo))}>
+                  onClick={() => setCrossSell((current) => current.filter((value) =>
+                    value.kind !== suggestion.kind ||
+                    (value.kind === "SHOPIFY" ? value.shopifyProductId !== suggestion.shopifyProductId : value.productNo !== suggestion.productNo)
+                  ))}>
                   {t("Remove suggestion")}
                 </button>
               </div>
@@ -729,15 +775,57 @@ export function ProductDetail() {
             <select value={crossSellSelection} onChange={(e) => setCrossSellSelection(e.target.value)}>
               <option value="">{t("Select a product…")}</option>
               {allProducts.filter((candidate) =>
-                candidate.productNo !== product?.productNo && !crossSellProductNos.includes(candidate.productNo)
+                candidate.productNo !== product?.productNo &&
+                !crossSell.some((entry) => entry.kind === "RESERVLY" && entry.productNo === candidate.productNo)
               ).map((candidate) => (
                 <option key={candidate.id} value={candidate.productNo}>{candidate.name} ({candidate.productNo})</option>
               ))}
             </select>
             <button type="button" className="btn btn-sm" disabled={!crossSellSelection} onClick={() => {
-              setCrossSellProductNos((current) => [...current, crossSellSelection]);
+              const selected = allProducts.find((candidate) => candidate.productNo === crossSellSelection);
+              if (selected) setCrossSell((current) => [...current, {
+                kind: "RESERVLY", productNo: selected.productNo, name: selected.name,
+                type: selected.type, defaultUnitPrice: selected.defaultUnitPrice,
+              }]);
               setCrossSellSelection("");
             }}>{t("Add suggestion")}</button>
+          </div>
+          <div style={{ marginTop: 16 }}>
+            {shopifyConfigured === false ? (
+              <div className="faint">{t("Shopify catalog not configured")}</div>
+            ) : (
+              <>
+                <input
+                  value={shopifySearchQuery}
+                  onChange={(event) => setShopifySearchQuery(event.target.value)}
+                  placeholder={t("Search your Shopify catalog")}
+                />
+                {shopifySearchLoading && <Spinner small />}
+                {shopifySearchQuery && shopifyProducts.length > 0 && (
+                  <div className="translation-panel" style={{ marginTop: 8 }}>
+                    <div className="field-label">{t("Shopify products")}</div>
+                    {shopifyProducts.map((candidate) => {
+                      const added = crossSell.some((entry) =>
+                        entry.kind === "SHOPIFY" && entry.shopifyProductId === candidate.id);
+                      return (
+                        <div className="btn-row" key={candidate.id} style={{ justifyContent: "space-between", marginTop: 8 }}>
+                          <div className="btn-row">
+                            {candidate.image && <img src={candidate.image} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4 }} />}
+                            <span>{candidate.title} · {money(candidate.price)}</span>
+                          </div>
+                          <button type="button" className="btn btn-sm" disabled={added || !candidate.variantId} onClick={() => {
+                            setCrossSell((current) => [...current, {
+                              kind: "SHOPIFY", shopifyProductId: candidate.id, variantId: candidate.variantId,
+                              title: candidate.title, price: candidate.price, imageUrl: candidate.image, handle: candidate.handle,
+                            }]);
+                          }}>{t("Add suggestion")}</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

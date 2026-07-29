@@ -114,10 +114,17 @@ export interface Product {
 }
 
 export interface CrossSellSuggestion {
-  productNo: string;
-  name: string;
-  type: ProductType;
-  defaultUnitPrice: number;
+  kind: "RESERVLY" | "SHOPIFY";
+  productNo?: string;
+  name?: string;
+  type?: ProductType;
+  defaultUnitPrice?: number;
+  shopifyProductId?: string;
+  variantId?: string;
+  title?: string;
+  price?: number;
+  imageUrl?: string;
+  handle?: string;
 }
 
 export interface ProductTranslation {
@@ -482,6 +489,7 @@ export interface Settings {
 export interface ApiOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
+  signal?: AbortSignal;
 }
 
 /**
@@ -494,6 +502,7 @@ export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
     method: opts.method ?? (hasBody ? "POST" : "GET"),
     headers: hasBody ? { "Content-Type": "application/json" } : undefined,
     body: hasBody ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal,
   });
   if (!res.ok) {
     // 401s from the staff-gated API relock the app; platform-admin endpoints

@@ -338,6 +338,13 @@ CREATE TABLE IF NOT EXISTS product_addons (
 CREATE TABLE IF NOT EXISTS product_cross_sell (
   product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
   suggested_product_no TEXT NOT NULL,
+  kind TEXT DEFAULT 'RESERVLY',
+  shopify_product_id TEXT DEFAULT '',
+  shopify_variant_id TEXT DEFAULT '',
+  title TEXT DEFAULT '',
+  price REAL DEFAULT 0,
+  image_url TEXT DEFAULT '',
+  handle TEXT DEFAULT '',
   PRIMARY KEY (product_id, suggested_product_no)
 );
 
@@ -467,6 +474,13 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE bookings ADD COLUMN id_photo_at TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN ticket_emailed_at TEXT",
     "ALTER TABLE product_addons ADD COLUMN shopify_variant_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE product_cross_sell ADD COLUMN kind TEXT DEFAULT 'RESERVLY'",
+    "ALTER TABLE product_cross_sell ADD COLUMN shopify_product_id TEXT DEFAULT ''",
+    "ALTER TABLE product_cross_sell ADD COLUMN shopify_variant_id TEXT DEFAULT ''",
+    "ALTER TABLE product_cross_sell ADD COLUMN title TEXT DEFAULT ''",
+    "ALTER TABLE product_cross_sell ADD COLUMN price REAL DEFAULT 0",
+    "ALTER TABLE product_cross_sell ADD COLUMN image_url TEXT DEFAULT ''",
+    "ALTER TABLE product_cross_sell ADD COLUMN handle TEXT DEFAULT ''",
   ]) {
     try {
       d.exec(stmt);

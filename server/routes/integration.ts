@@ -277,7 +277,7 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
         });
         continue;
       }
-      if (!props._booking_type) continue; // plain retail item in the same cart — NAV order flow handles it
+      if (!props._booking_type || props._cross_sell === "1") continue; // plain retail item OR cross-sell product
       Object.assign(bookingProperties, props);
       bookingLineProperties.push(props);
       if (props._booking_type === "RENTAL") {
@@ -652,6 +652,24 @@ proxyRouter.get("/addons", (req, res) => {
     a.shopify_variant_id AS shopifyVariantId
     FROM product_addons a JOIN products p ON p.id=a.product_id WHERE p.product_no=? AND a.active=1 ORDER BY a.name`).all(productNo);
   res.json({ addons });
+});
+
+proxyRouter.get("/cross-sell", (req, res) => {
+  const productNo = String(req.query.productNo || "").trim();
+  if (!productNo) return res.status(400).json({ error: "productNo required" });
+  const suggestions = db.prepare(`SELECT cross_sell.kind,
+    suggested.product_no AS productNo,suggested.name,suggested.type,
+    suggested.default_unit_price AS defaultUnitPrice,
+    cross_sell.shopify_product_id AS shopifyProductId,
+    cross_sell.shopify_variant_id AS variantId,cross_sell.title,cross_sell.price,
+    cross_sell.image_url AS imageUrl,cross_sell.handle
+    FROM products source
+    JOIN product_cross_sell cross_sell ON cross_sell.product_id=source.id
+    LEFT JOIN products suggested ON cross_sell.kind='RESERVLY'
+      AND suggested.product_no=cross_sell.suggested_product_no
+    WHERE source.product_no=?
+    ORDER BY COALESCE(suggested.name,cross_sell.title)`).all(productNo);
+  res.json({ suggestions });
 });
 
 proxyRouter.post("/waitlist", (req, res) => {

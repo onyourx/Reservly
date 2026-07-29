@@ -35,6 +35,7 @@
     var quantityMin = 1;
     var quantityMax = 1;
     var configuredAddons = [];
+    var shopifyCrossSell = [];
     var stores = [];
     var sessions = [];
     var availability = {};
@@ -749,6 +750,28 @@
       if (termsRequired) addSummary(summary, "Terms", termsAccepted ? "✓ Accepted" : "Not accepted");
       var total = quote && quote.lines && quote.lines[0] ? quote.lines[0].lineTotal : 0;
       addSummary(summary, "Total", money(total), "gsl-confirm-total");
+      if (shopifyCrossSell.length) {
+        var crossSellBox = el("div", "gsl-cross-sell");
+        crossSellBox.appendChild(el("h3", "", "Frequently added together"));
+        shopifyCrossSell.forEach(function (suggestion) {
+          var row = el("label", "gsl-check-row gsl-cross-sell-card");
+          var checkbox = el("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = !!suggestion.required || !!suggestion.selected;
+          checkbox.disabled = !!suggestion.required;
+          checkbox.addEventListener("change", function () { suggestion.selected = checkbox.checked; });
+          row.appendChild(checkbox);
+          if (suggestion.imageUrl) {
+            var image = el("img", "gsl-cross-sell-image");
+            image.src = suggestion.imageUrl;
+            image.alt = "";
+            row.appendChild(image);
+          }
+          row.appendChild(el("span", "", suggestion.title + " · " + money(suggestion.price)));
+          crossSellBox.appendChild(row);
+        });
+        summary.appendChild(crossSellBox);
+      }
       body.appendChild(summary);
     }
 
@@ -819,7 +842,7 @@
     }
 
     function submitCart() {
-      var extras = selectedAddonItems();
+      var extras = selectedAddonItems().concat(selectedCrossSellItems());
       if (!extras.length) {
         form.submit();
         return;
@@ -858,11 +881,29 @@
       });
     }
 
+    function selectedCrossSellItems() {
+      return shopifyCrossSell.filter(function (suggestion) {
+        return suggestion.required || suggestion.selected;
+      }).map(function (suggestion) {
+        return {
+          id: Number(String(suggestion.variantId).replace(/^gid:\/\/shopify\/ProductVariant\//, "")),
+          quantity: 1,
+          properties: { _cross_sell: "1" },
+        };
+      });
+    }
+
     request("/addons", { productNo: productNo }).then(function (data) {
       configuredAddons = (data.addons || []).filter(function (addon) { return addon.shopifyVariantId; });
       if (configuredAddons.length) detailsNeeded = true;
       if (step === 2 && !modal.hidden) renderStep();
       else updateNavigation();
+    }).catch(function () {});
+    request("/cross-sell", { productNo: productNo }).then(function (data) {
+      shopifyCrossSell = (data.suggestions || []).filter(function (suggestion) {
+        return suggestion.kind === "SHOPIFY" && suggestion.variantId;
+      });
+      if (step === 3 && !modal.hidden) renderStep();
     }).catch(function () {});
   }
 })();

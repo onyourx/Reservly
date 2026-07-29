@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { db, uid, now, getSettings, pj, auditLog, currentTenant, putSettings } from "../db.js";
 import { getActivityTypes, getActivityProducts, navMode, pushProductToNav } from "../lib/nav.js";
-import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels } from "../lib/shopifyAdmin.js";
+import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels, shopifyGql } from "../lib/shopifyAdmin.js";
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
 import { createZoomMeeting } from "../lib/zoom.js";
@@ -142,11 +142,16 @@ function serializeProduct(p: any) {
     }),
     addons: db.prepare(`SELECT id,addon_product_no AS addonProductNo,name,price,max_qty AS maxQty,
       required,active,shopify_variant_id AS shopifyVariantId FROM product_addons WHERE product_id=? ORDER BY name`).all(p.id),
-    crossSell: db.prepare(`SELECT suggested.product_no AS productNo,suggested.name,suggested.type,
-      suggested.default_unit_price AS defaultUnitPrice
+    crossSell: db.prepare(`SELECT cross_sell.kind,
+      suggested.product_no AS productNo,suggested.name,suggested.type,
+      suggested.default_unit_price AS defaultUnitPrice,
+      cross_sell.shopify_product_id AS shopifyProductId,
+      cross_sell.shopify_variant_id AS variantId,cross_sell.title,cross_sell.price,
+      cross_sell.image_url AS imageUrl,cross_sell.handle
       FROM product_cross_sell cross_sell
-      JOIN products suggested ON suggested.product_no=cross_sell.suggested_product_no
-      WHERE cross_sell.product_id=? ORDER BY suggested.name`).all(p.id),
+      LEFT JOIN products suggested ON cross_sell.kind='RESERVLY'
+        AND suggested.product_no=cross_sell.suggested_product_no
+      WHERE cross_sell.product_id=? ORDER BY COALESCE(suggested.name,cross_sell.title)`).all(p.id),
   };
 }
 
@@ -228,6 +233,39 @@ catalogRouter.get("/products", (req, res) => {
   res.json({ products: (db.prepare(sql).all(...params) as any[]).map(serializeProduct) });
 });
 
+catalogRouter.get("/shopify/products", requirePerm("products"), async (req, res) => {
+  if (!getSettings().shopifyApiSecret) return res.json({ products: [], configured: false });
+  try {
+    const data = await shopifyGql<{
+      products: { nodes: Array<{
+        id: string; title: string; handle: string;
+        images: { nodes: Array<{ url: string }> };
+        variants: { nodes: Array<{ id: string; price: string }> };
+      }> };
+    }>(`query ShopifyProductSearch($q: String!) {
+      products(first: 12, query: $q) {
+        nodes {
+          id title handle
+          images(first: 1) { nodes { url } }
+          variants(first: 1) { nodes { id price } }
+        }
+      }
+    }`, { q: String(req.query.q ?? "").trim() });
+    const products = (data.products?.nodes ?? []).map((product) => ({
+      id: product.id,
+      title: product.title,
+      handle: product.handle,
+      image: product.images.nodes[0]?.url ?? "",
+      price: Number(product.variants.nodes[0]?.price) || 0,
+      variantId: product.variants.nodes[0]?.id ?? "",
+    }));
+    return res.json({ products, configured: true });
+  } catch (err) {
+    console.warn("[shopify] product search failed", err);
+    return res.json({ products: [], configured: false });
+  }
+});
+
 catalogRouter.get("/localization", (_req, res) => {
   const languages = pj<string[]>(getSettings().enabledLanguages, ["en", "fr"]);
   const products = db.prepare("SELECT id,product_no AS productNo,type,name FROM products ORDER BY type,name").all() as any[];
@@ -261,14 +299,19 @@ catalogRouter.get("/cross-sell", requirePerm("bookings"), (req, res) => {
   if (!productNos.length) return res.json({ suggestions: [] });
 
   const placeholders = productNos.map(() => "?").join(",");
-  const suggestions = db.prepare(`SELECT DISTINCT suggested.product_no AS productNo,suggested.name,suggested.type,
-    suggested.default_unit_price AS defaultUnitPrice
+  const suggestions = db.prepare(`SELECT DISTINCT cross_sell.kind,
+    suggested.product_no AS productNo,suggested.name,suggested.type,
+    suggested.default_unit_price AS defaultUnitPrice,
+    cross_sell.shopify_product_id AS shopifyProductId,
+    cross_sell.shopify_variant_id AS variantId,cross_sell.title,cross_sell.price,
+    cross_sell.image_url AS imageUrl,cross_sell.handle
     FROM products source
     JOIN product_cross_sell cross_sell ON cross_sell.product_id=source.id
-    JOIN products suggested ON suggested.product_no=cross_sell.suggested_product_no
+    LEFT JOIN products suggested ON cross_sell.kind='RESERVLY'
+      AND suggested.product_no=cross_sell.suggested_product_no
     WHERE source.product_no IN (${placeholders})
-      AND suggested.product_no NOT IN (${placeholders})
-    ORDER BY suggested.name`).all(...productNos, ...productNos);
+      AND (cross_sell.kind='SHOPIFY' OR suggested.product_no NOT IN (${placeholders}))
+    ORDER BY COALESCE(suggested.name,cross_sell.title)`).all(...productNos, ...productNos);
   return res.json({ suggestions });
 });
 
@@ -363,25 +406,60 @@ catalogRouter.get("/products/:id/bookings", requirePerm("bookings"), (req, res) 
 catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
   const p = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as any;
   if (!p) return res.status(404).json({ error: "Product not found" });
-  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSellProductNos } = req.body ?? {};
+  const { imageUrl, webDescEn, webDescFr, translations, kit, shopifyProductId, availableOnWeb, defaultUnitPrice, securityDeposit, lateFeePerDay, prices, scheduling, addons, crossSell, crossSellProductNos } = req.body ?? {};
   const sku = req.body?.sku === undefined ? null : String(req.body.sku).trim();
   if (p.type === "SERVICE" && securityDeposit != null && Number(securityDeposit) !== 0) {
     return res.status(400).json({ error: "SERVICE security_deposit must be 0" });
   }
-  let normalizedCrossSell: string[] | undefined;
-  if (crossSellProductNos !== undefined) {
+  type NormalizedCrossSell = {
+    kind: "RESERVLY" | "SHOPIFY"; productNo: string; shopifyProductId: string;
+    variantId: string; title: string; price: number; imageUrl: string; handle: string;
+  };
+  let normalizedCrossSell: NormalizedCrossSell[] | undefined;
+  if (crossSell !== undefined) {
+    if (crossSell !== null && !Array.isArray(crossSell)) return res.status(400).json({ error: "crossSell must be an array" });
+    normalizedCrossSell = [];
+    const seen = new Set<string>();
+    for (const entry of crossSell ?? []) {
+      const kind = String(entry?.kind ?? "").toUpperCase();
+      if (kind === "RESERVLY") {
+        const productNo = String(entry?.productNo ?? "").trim();
+        if (!productNo || productNo === p.product_no || seen.has(`R:${productNo}`)) continue;
+        seen.add(`R:${productNo}`);
+        normalizedCrossSell.push({ kind, productNo, shopifyProductId: "", variantId: "", title: "", price: 0, imageUrl: "", handle: "" });
+      } else if (kind === "SHOPIFY") {
+        const productId = String(entry?.shopifyProductId ?? "").trim();
+        const variantId = String(entry?.variantId ?? "").trim();
+        if (!productId || !variantId || seen.has(`S:${productId}`)) continue;
+        seen.add(`S:${productId}`);
+        normalizedCrossSell.push({
+          kind, productNo: productId, shopifyProductId: productId, variantId,
+          title: String(entry?.title ?? "").trim(), price: Number(entry?.price) || 0,
+          imageUrl: String(entry?.imageUrl ?? "").trim(), handle: String(entry?.handle ?? "").trim(),
+        });
+      } else {
+        return res.status(400).json({ error: "crossSell kind must be RESERVLY or SHOPIFY" });
+      }
+    }
+  } else if (crossSellProductNos !== undefined) {
     if (crossSellProductNos !== null && !Array.isArray(crossSellProductNos)) {
       return res.status(400).json({ error: "crossSellProductNos must be an array" });
     }
-    normalizedCrossSell = [...new Set<string>(
+    const productNos = [...new Set<string>(
       (crossSellProductNos ?? []).map((value: unknown) => String(value).trim()).filter(Boolean),
     )].filter((productNo) => productNo !== p.product_no && productNo !== String(req.body?.productNo ?? ""));
-    if (normalizedCrossSell.length) {
-      const placeholders = normalizedCrossSell.map(() => "?").join(",");
+    normalizedCrossSell = productNos.map((productNo) => ({
+      kind: "RESERVLY", productNo, shopifyProductId: "", variantId: "", title: "", price: 0, imageUrl: "", handle: "",
+    }));
+  }
+  if (normalizedCrossSell !== undefined) {
+    const reservlyNos = normalizedCrossSell.filter((entry) => entry.kind === "RESERVLY").map((entry) => entry.productNo);
+    if (reservlyNos.length) {
+      const placeholders = reservlyNos.map(() => "?").join(",");
       const existing = db.prepare(`SELECT product_no FROM products WHERE product_no IN (${placeholders})`)
-        .all(...normalizedCrossSell) as { product_no: string }[];
+        .all(...reservlyNos) as { product_no: string }[];
       const existingNos = new Set(existing.map((row) => row.product_no));
-      const missing = normalizedCrossSell.filter((productNo) => !existingNos.has(productNo));
+      const missing = reservlyNos.filter((productNo) => !existingNos.has(productNo));
       if (missing.length) return res.status(400).json({ error: `Unknown cross-sell products: ${missing.join(", ")}` });
     }
   }
@@ -444,8 +522,13 @@ catalogRouter.put("/products/:id", requirePerm("products"), (req, res) => {
   if (normalizedCrossSell !== undefined) {
     const replaceCrossSell = db.transaction(() => {
       db.prepare("DELETE FROM product_cross_sell WHERE product_id=?").run(p.id);
-      const insert = db.prepare("INSERT INTO product_cross_sell(product_id,suggested_product_no) VALUES(?,?)");
-      for (const productNo of normalizedCrossSell) insert.run(p.id, productNo);
+      const insert = db.prepare(`INSERT INTO product_cross_sell(
+        product_id,suggested_product_no,kind,shopify_product_id,shopify_variant_id,title,price,image_url,handle
+      ) VALUES(?,?,?,?,?,?,?,?,?)`);
+      for (const entry of normalizedCrossSell) {
+        insert.run(p.id, entry.productNo, entry.kind, entry.shopifyProductId, entry.variantId,
+          entry.title, entry.price, entry.imageUrl, entry.handle);
+      }
     });
     replaceCrossSell();
   }

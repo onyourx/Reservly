@@ -274,6 +274,10 @@
 .gsl-summary-row strong { font-size: .86rem; text-align: right; }
 .gsl-confirm-total { border-bottom: 0; padding-top: 16px; }
 .gsl-confirm-total strong { color: var(--gsl-accent); font-size: 1.15rem; }
+.gsl-cross-sell { border-top: 1px solid var(--gsl-border); margin-top: 18px; padding-top: 16px; }
+.gsl-cross-sell-card { align-items: center; display: flex; gap: 10px; margin-top: 10px; }
+.gsl-cross-sell-card span { flex: 1; }
+.gsl-cross-sell-image { border-radius: 6px; height: 44px; object-fit: cover; width: 44px; }
 
 @media (max-width: 640px) {
   .gsl-dialog {

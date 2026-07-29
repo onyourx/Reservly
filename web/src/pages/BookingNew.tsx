@@ -653,20 +653,22 @@ export function BookingNew() {
     requiredFieldsOk && termsOk && !creating;
 
   const handleQuickAddCrossSell = (suggestion: CrossSellSuggestion) => {
-    if (suggestion.type === "RENTAL") {
+    if (suggestion.kind !== "RESERVLY" || !suggestion.productNo || !suggestion.name || !suggestion.type) return;
+    const { productNo, name, type } = suggestion;
+    if (type === "RENTAL") {
       setBasket((current) => [...current, {
         key: nextKey++,
-        ql: { type: "RENTAL", productNo: suggestion.productNo, storeId: bookingStoreId, from: "", to: "", qty: 1 },
-        productNo: suggestion.productNo,
-        label: suggestion.name,
+        ql: { type: "RENTAL", productNo, storeId: bookingStoreId, from: "", to: "", qty: 1 },
+        productNo,
+        label: name,
         sub: `${stores.find((store) => store.id === bookingStoreId)?.name ?? bookingStoreId} · confirm dates · qty 1`,
       }]);
     } else {
       setBasket((current) => [...current, {
         key: nextKey++,
         ql: { type: "COURSE", sessionId: "", qty: 1 },
-        productNo: suggestion.productNo,
-        label: suggestion.name,
+        productNo,
+        label: name,
         sub: "Confirm session · qty 1",
       }]);
     }
@@ -1001,9 +1003,15 @@ export function BookingNew() {
             <hr className="divider" />
             <div className="field-label">{t("Customers also rent")}</div>
             <div className="btn-row" style={{ overflowX: "auto", flexWrap: "nowrap", paddingBottom: 4 }}>
-              {crossSellSuggestions.map((suggestion) => (
-                <div className="btn-row" key={suggestion.productNo} style={{ flexWrap: "nowrap" }}>
-                  <span>{suggestion.name} · {money(suggestion.defaultUnitPrice)}</span>
+              {crossSellSuggestions.map((suggestion) => suggestion.kind === "SHOPIFY" ? (
+                <div className="btn-row" key={`shopify:${suggestion.shopifyProductId}`} style={{ flexWrap: "nowrap" }}>
+                  {suggestion.imageUrl && <img src={suggestion.imageUrl} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 4 }} />}
+                  <span>{suggestion.title} · {money(suggestion.price ?? 0)}</span>
+                  <span className="faint">{t("Ring up at POS")}</span>
+                </div>
+              ) : (
+                <div className="btn-row" key={`reservly:${suggestion.productNo}`} style={{ flexWrap: "nowrap" }}>
+                  <span>{suggestion.name} · {money(suggestion.defaultUnitPrice ?? 0)}</span>
                   <button type="button" className="btn btn-sm" onClick={() => handleQuickAddCrossSell(suggestion)}>
                     {t("Add to basket")}
                   </button>
