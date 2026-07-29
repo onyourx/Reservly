@@ -10,7 +10,7 @@ import { NtlmClient } from "axios-ntlm";
 import type { AxiosInstance } from "axios";
 import { XMLParser } from "fast-xml-parser";
 import crypto from "node:crypto";
-import { getSettings } from "../db.js";
+import { db, getSettings } from "../db.js";
 
 const ENDPOINT = { ACTIVITY: "/Codeunit/WSLSActivity", WEBPOS: "/Codeunit/WSWebPOS" };
 const ACTION = {
@@ -28,6 +28,38 @@ const parser = new XMLParser({ ignoreAttributes: true, removeNSPrefix: true });
 export function navMode(): "mock" | "live" {
   const s = getSettings();
   return s.navMode === "live" && s.navBaseUrl ? "live" : "mock";
+}
+
+export function posMappingForStore(storeId: string | null | undefined): {
+  posStoreId: string;
+  posTerminalId: string;
+  posStaffId: string;
+} {
+  const settings = getSettings();
+  const defaults = {
+    posStoreId: settings.posStoreId || "091",
+    posTerminalId: settings.posTerminalId || "9101",
+    posStaffId: settings.posStaffId || "WEB",
+  };
+
+  if (!storeId) return defaults;
+
+  try {
+    const store = db.prepare("SELECT pos_store_id, pos_terminal_id, pos_staff_id FROM stores WHERE id = ?").get(storeId) as {
+      pos_store_id?: string;
+      pos_terminal_id?: string;
+      pos_staff_id?: string;
+    } | undefined;
+    if (!store) return defaults;
+
+    return {
+      posStoreId: (store.pos_store_id || "").trim() || defaults.posStoreId,
+      posTerminalId: (store.pos_terminal_id || "").trim() || defaults.posTerminalId,
+      posStaffId: (store.pos_staff_id || "").trim() || defaults.posStaffId,
+    };
+  } catch {
+    return defaults;
+  }
 }
 
 function client(): AxiosInstance {
@@ -276,9 +308,14 @@ export interface PosLine { sellingItem: string; description: string; amount: num
 
 export async function webPosSuspend(input: {
   receiptNo: string; customerEmail: string; lines: PosLine[];
+  posMapping?: { posStoreId: string; posTerminalId: string; posStaffId: string };
 }): Promise<{ receiptNo: string }> {
-  if (navMode() === "mock") return { receiptNo: input.receiptNo };
-  const s = getSettings();
+  if (navMode() === "mock") {
+    const s = input.posMapping || posMappingForStore(null);
+    console.info(`[nav] mock POS suspend ${input.receiptNo} store=${s.posStoreId} terminal=${s.posTerminalId} staff=${s.posStaffId}`);
+    return { receiptNo: input.receiptNo };
+  }
+  const s = input.posMapping || posMappingForStore(null);
   const guid = "00000000-0000-0000-0000-000000000000";
   const head =
     `<q3:MobileTransaction><q3:Id>${guid}</q3:Id><q3:StoreId>${esc(s.posStoreId)}</q3:StoreId>` +

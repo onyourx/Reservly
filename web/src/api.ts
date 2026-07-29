@@ -6,6 +6,9 @@ export interface Store {
   code: string;
   name: string;
   city: string;
+  posStoreId?: string;
+  posTerminalId?: string;
+  posStaffId?: string;
 }
 
 export interface StaffUser {

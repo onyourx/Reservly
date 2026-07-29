@@ -16,11 +16,11 @@ export const catalogRouter = Router();
 catalogRouter.get("/stores", (req, res) => {
   const allowed = allowedStoreIds(req);
   if (allowed === "*") {
-    return res.json({ stores: db.prepare("SELECT * FROM stores ORDER BY name").all() });
+    return res.json({ stores: db.prepare("SELECT * FROM stores ORDER BY name").all().map(serializeStore) });
   }
   if (!allowed.length) return res.json({ stores: [] });
   const placeholders = allowed.map(() => "?").join(",");
-  return res.json({ stores: db.prepare(`SELECT * FROM stores WHERE id IN (${placeholders}) ORDER BY name`).all(...allowed) });
+  return res.json({ stores: db.prepare(`SELECT * FROM stores WHERE id IN (${placeholders}) ORDER BY name`).all(...allowed).map(serializeStore) });
 });
 
 const serializeStore = (store: any) => ({
@@ -28,23 +28,29 @@ const serializeStore = (store: any) => ({
   code: store.code,
   name: store.name,
   city: store.city ?? "",
+  posStoreId: store.pos_store_id ?? "",
+  posTerminalId: store.pos_terminal_id ?? "",
+  posStaffId: store.pos_staff_id ?? "",
 });
 
 catalogRouter.post("/stores", requireOwner, (req, res) => {
   const code = String(req.body?.code ?? "").trim();
   const name = String(req.body?.name ?? "").trim();
   const city = String(req.body?.city ?? "").trim();
+  const posStoreId = String(req.body?.posStoreId ?? "").trim();
+  const posTerminalId = String(req.body?.posTerminalId ?? "").trim();
+  const posStaffId = String(req.body?.posStaffId ?? "").trim();
   if (!code) return res.status(400).json({ error: "code_required" });
   if (!name) return res.status(400).json({ error: "name_required" });
   if (db.prepare("SELECT id FROM stores WHERE code=?").get(code)) {
     return res.status(409).json({ error: "code_exists" });
   }
-  const store = { id: uid(), code, name, city };
+  const store = { id: uid(), code, name, city, posStoreId, posTerminalId, posStaffId };
   const timestamp = now();
-  db.prepare("INSERT INTO stores(id,code,name,city,created_at,updated_at) VALUES(?,?,?,?,?,?)")
-    .run(store.id, store.code, store.name, store.city, timestamp, timestamp);
+  db.prepare("INSERT INTO stores(id,code,name,city,pos_store_id,pos_terminal_id,pos_staff_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)")
+    .run(store.id, store.code, store.name, store.city, store.posStoreId, store.posTerminalId, store.posStaffId, timestamp, timestamp);
   auditLog("store.created", code);
-  return res.json({ store });
+  return res.json({ store: serializeStore({ id: store.id, code: store.code, name: store.name, city: store.city, pos_store_id: store.posStoreId, pos_terminal_id: store.posTerminalId, pos_staff_id: store.posStaffId }) });
 });
 
 catalogRouter.put("/stores/:id", requireOwner, (req, res) => {
@@ -54,6 +60,9 @@ catalogRouter.put("/stores/:id", requireOwner, (req, res) => {
   let code = existing.code as string;
   let name = existing.name as string;
   let city = existing.city ?? "";
+  let posStoreId = existing.pos_store_id ?? "";
+  let posTerminalId = existing.pos_terminal_id ?? "";
+  let posStaffId = existing.pos_staff_id ?? "";
   if (req.body?.code !== undefined) {
     code = String(req.body.code).trim();
     if (!code) return res.status(400).json({ error: "code_required" });
@@ -66,9 +75,12 @@ catalogRouter.put("/stores/:id", requireOwner, (req, res) => {
     if (!name) return res.status(400).json({ error: "name_required" });
   }
   if (req.body?.city !== undefined) city = String(req.body.city).trim();
+  if (req.body?.posStoreId !== undefined) posStoreId = String(req.body.posStoreId).trim();
+  if (req.body?.posTerminalId !== undefined) posTerminalId = String(req.body.posTerminalId).trim();
+  if (req.body?.posStaffId !== undefined) posStaffId = String(req.body.posStaffId).trim();
 
-  db.prepare("UPDATE stores SET code=?,name=?,city=?,updated_at=? WHERE id=?")
-    .run(code, name, city, now(), existing.id);
+  db.prepare("UPDATE stores SET code=?,name=?,city=?,pos_store_id=?,pos_terminal_id=?,pos_staff_id=?,updated_at=? WHERE id=?")
+    .run(code, name, city, posStoreId, posTerminalId, posStaffId, now(), existing.id);
   auditLog("store.updated", code);
   return res.json({ store: serializeStore(db.prepare("SELECT * FROM stores WHERE id=?").get(existing.id)) });
 });

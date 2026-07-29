@@ -6,7 +6,7 @@ import { db, now, j, localDate, auditLog, getSettings, currentTenant, DEFAULT_TE
 import { quoteLines, round2 } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
 import { BookingValidationError, createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
-import { cancelReservation, webPosSuspend } from "../lib/nav.js";
+import { cancelReservation, posMappingForStore, webPosSuspend } from "../lib/nav.js";
 import { encryptId } from "../lib/crypto.js";
 import { emit } from "../lib/events.js";
 import { notifyWaitlistForBooking } from "../lib/waitlist.js";
@@ -371,6 +371,7 @@ bookingRouter.post("/bookings/:id/push-pos", requirePerm("bookings"), async (req
     const b = mustGet(req, req.params.id);
     const lines = db.prepare("SELECT * FROM booking_lines WHERE booking_id = ?").all(b.id) as any[];
     const receiptNo = `WEB-${b.ref}`;
+    const posMapping = posMappingForStore(b.store_id);
     await webPosSuspend({
       receiptNo,
       customerEmail: b.customer_email,
@@ -381,6 +382,7 @@ bookingRouter.post("/bookings/:id/push-pos", requirePerm("bookings"), async (req
         bookingRef: l.booking_ref || b.ref,
         qty: l.qty,
       })),
+      posMapping,
     });
     db.prepare("UPDATE bookings SET pos_receipt_no = ?, status = 'POS_PENDING', updated_at = ? WHERE id = ?").run(receiptNo, now(), b.id);
     emit(b.id, "booking.pos_pushed", { receiptNo });

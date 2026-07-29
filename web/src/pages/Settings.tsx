@@ -69,7 +69,9 @@ export function SettingsPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
   const [storesLoading, setStoresLoading] = useState(true);
-  const [storeForm, setStoreForm] = useState({ code: "", name: "", city: "" });
+  const [storeForm, setStoreForm] = useState({
+    code: "", name: "", city: "", posStoreId: "", posTerminalId: "", posStaffId: "",
+  });
   const [editingStore, setEditingStore] = useState<Store | null>(null);
   const [storeActionId, setStoreActionId] = useState<string | null>(null);
   const [confirmStoreDeleteId, setConfirmStoreDeleteId] = useState<string | null>(null);
@@ -117,7 +119,7 @@ export function SettingsPage() {
     setStoreActionId("new");
     try {
       await api("/api/stores", { method: "POST", body: storeForm });
-      setStoreForm({ code: "", name: "", city: "" });
+      setStoreForm({ code: "", name: "", city: "", posStoreId: "", posTerminalId: "", posStaffId: "" });
       toast.success(t("Location created"));
       await refreshStores();
     } catch (e) {
@@ -133,6 +135,7 @@ export function SettingsPage() {
     try {
       await api(`/api/stores/${editingStore.id}`, { method: "PUT", body: {
         code: editingStore.code, name: editingStore.name, city: editingStore.city,
+        posStoreId: editingStore.posStoreId, posTerminalId: editingStore.posTerminalId, posStaffId: editingStore.posStaffId,
       } });
       setEditingStore(null);
       toast.success(t("Location updated"));
@@ -350,7 +353,7 @@ export function SettingsPage() {
             <div className="table-wrap">
               <table className="table">
                 <thead><tr>
-                  <th>{t("Code")}</th><th>{t("Name")}</th><th>{t("City")}</th><th>{t("Actions")}</th>
+                  <th>{t("Code")}</th><th>{t("Name")}</th><th>{t("City")}</th><th>{t("POS mapping")}</th><th>{t("Actions")}</th>
                 </tr></thead>
                 <tbody>
                   {stores.map((store) => {
@@ -368,6 +371,20 @@ export function SettingsPage() {
                         <td>{editing
                           ? <input aria-label={t("City")} value={editingStore.city} onChange={(e) => setEditingStore({ ...editingStore, city: e.target.value })} />
                           : store.city || "—"}</td>
+                        <td>{editing ? (
+                          <div style={{ display: "grid", gap: 6 }}>
+                            <strong>{t("POS mapping")}</strong>
+                            <input aria-label={t("POS store ID")} placeholder={t("POS store ID")} value={editingStore.posStoreId ?? ""} onChange={(e) => setEditingStore({ ...editingStore, posStoreId: e.target.value })} />
+                            <input aria-label={t("POS terminal ID")} placeholder={t("POS terminal ID")} value={editingStore.posTerminalId ?? ""} onChange={(e) => setEditingStore({ ...editingStore, posTerminalId: e.target.value })} />
+                            <input aria-label={t("POS staff ID")} placeholder={t("POS staff ID")} value={editingStore.posStaffId ?? ""} onChange={(e) => setEditingStore({ ...editingStore, posStaffId: e.target.value })} />
+                          </div>
+                        ) : (
+                          <span className="faint">
+                            {[store.posStoreId, store.posTerminalId, store.posStaffId].some((value) => value?.trim())
+                              ? [store.posStoreId, store.posTerminalId, store.posStaffId].map((value) => value || "—").join(" / ")
+                              : t("Defaults")}
+                          </span>
+                        )}</td>
                         <td><div className="btn-row">
                           {editing ? <>
                             <button type="button" className="btn btn-sm btn-primary" disabled={storeActionId === store.id || !editingStore.code.trim() || !editingStore.name.trim()} onClick={() => void updateStore()}>{t("Save")}</button>
@@ -386,6 +403,12 @@ export function SettingsPage() {
                     <td><input className="mono" required aria-label={t("Location code")} title={t("POS / NAV location code")} placeholder={t("POS / NAV location code")} value={storeForm.code} onChange={(e) => setStoreForm({ ...storeForm, code: e.target.value })} /></td>
                     <td><input required aria-label={t("Name")} placeholder={t("Name")} value={storeForm.name} onChange={(e) => setStoreForm({ ...storeForm, name: e.target.value })} /></td>
                     <td><input aria-label={t("City")} placeholder={t("City")} value={storeForm.city} onChange={(e) => setStoreForm({ ...storeForm, city: e.target.value })} /></td>
+                    <td><div style={{ display: "grid", gap: 6 }}>
+                      <strong>{t("POS mapping")}</strong>
+                      <input aria-label={t("POS store ID")} placeholder={t("POS store ID")} value={storeForm.posStoreId} onChange={(e) => setStoreForm({ ...storeForm, posStoreId: e.target.value })} />
+                      <input aria-label={t("POS terminal ID")} placeholder={t("POS terminal ID")} value={storeForm.posTerminalId} onChange={(e) => setStoreForm({ ...storeForm, posTerminalId: e.target.value })} />
+                      <input aria-label={t("POS staff ID")} placeholder={t("POS staff ID")} value={storeForm.posStaffId} onChange={(e) => setStoreForm({ ...storeForm, posStaffId: e.target.value })} />
+                    </div></td>
                     <td><button type="button" className="btn btn-sm btn-primary" disabled={storeActionId === "new" || !storeForm.code.trim() || !storeForm.name.trim()} onClick={() => void createStore()}>
                       {t("Add location")}
                     </button></td>
@@ -636,10 +659,11 @@ export function SettingsPage() {
           <Field label="NAV username"><input value={settings.navUsername} onChange={(e) => set("navUsername", e.target.value)} placeholder="WEBSERVICE" /></Field>
           <Field label="NAV domain"><input value={settings.navDomain} onChange={(e) => set("navDomain", e.target.value)} placeholder="GOSSELIN" /></Field>
           <Field label="NAV password (write-only, blank = unchanged)"><input type="password" value={settings.navPassword ?? ""} onChange={(e) => set("navPassword", e.target.value)} autoComplete="new-password" /></Field>
-          <hr className="divider" /><h3 className="card-title">{t("POS mapping")}</h3>
-          <Field label="POS store ID"><input value={settings.posStoreId} onChange={(e) => set("posStoreId", e.target.value)} /></Field>
-          <Field label="POS terminal ID"><input value={settings.posTerminalId} onChange={(e) => set("posTerminalId", e.target.value)} /></Field>
-          <Field label="POS staff ID"><input value={settings.posStaffId} onChange={(e) => set("posStaffId", e.target.value)} /></Field>
+          <hr className="divider" /><h3 className="card-title">{t("POS mapping defaults")}</h3>
+          <div className="faint">{t("Used when a location has no mapping of its own")} ({t("Settings")} → {t("Stores")})</div>
+          <Field label={t("POS store ID")}><input value={settings.posStoreId} onChange={(e) => set("posStoreId", e.target.value)} /></Field>
+          <Field label={t("POS terminal ID")}><input value={settings.posTerminalId} onChange={(e) => set("posTerminalId", e.target.value)} /></Field>
+          <Field label={t("POS staff ID")}><input value={settings.posStaffId} onChange={(e) => set("posStaffId", e.target.value)} /></Field>
         </>, 8)}</div>
         <div className="card"><h2 className="card-title">{t("Shopify")}</h2>{fields(<>
           <Field label="Shopify shop"><input value={settings.shopifyShop} onChange={(e) => set("shopifyShop", e.target.value)} placeholder="my-shop.myshopify.com" /></Field>

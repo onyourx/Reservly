@@ -420,6 +420,9 @@ CREATE TABLE IF NOT EXISTS staff_users (
   for (const stmt of [
     "ALTER TABLE stores ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE stores ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE stores ADD COLUMN pos_store_id TEXT DEFAULT ''",
+    "ALTER TABLE stores ADD COLUMN pos_terminal_id TEXT DEFAULT ''",
+    "ALTER TABLE stores ADD COLUMN pos_staff_id TEXT DEFAULT ''",
     "ALTER TABLE booking_lines ADD COLUMN checklist TEXT NOT NULL DEFAULT '[]'",
     "ALTER TABLE bookings ADD COLUMN sign_token TEXT DEFAULT ''",
     "ALTER TABLE bookings ADD COLUMN signature_png TEXT DEFAULT ''",
