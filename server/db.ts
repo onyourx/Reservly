@@ -473,6 +473,7 @@ CREATE TABLE IF NOT EXISTS staff_users (
 initSchema(defaultDb);
 
 const SETTING_DEFAULTS: Record<string, string> = {
+  currency: "CAD",
   navMode: process.env.NAV_BASE_URL ? "live" : "mock",
   navBaseUrl: process.env.NAV_BASE_URL || "",
   navUsername: process.env.NAV_USERNAME || "",

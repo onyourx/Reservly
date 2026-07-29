@@ -6,10 +6,12 @@ import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
 import { RichTextEditor } from "../components/RichTextEditor";
+import { setDisplayCurrency } from "../format";
 
 type Tab = "store" | "access" | "policies" | "integrations" | "webhooks" | "health";
 
 const EMPTY = {
+  currency: "CAD",
   navBaseUrl: "", navMode: "mock", navUsername: "", navDomain: "",
   shopifyShop: "", conduitUrl: "", posStoreId: "", posTerminalId: "", posStaffId: "",
   idRetentionDays: "30", dataRetentionDays: "730", publicUrl: "",
@@ -189,6 +191,7 @@ export function SettingsPage() {
           const key = `terms${type[0].toUpperCase()}${type.slice(1)}Pdf` as keyof GeneralSettings;
           Object.assign(next, { [key]: pdfStates[index] ? "1" : "" });
         });
+        setDisplayCurrency(next.currency || "CAD");
         setSettings(next);
       })
       .catch((e: Error) => setError(e.message))
@@ -222,6 +225,7 @@ export function SettingsPage() {
         termsServicePdf: settings.termsServicePdf,
       };
       setSettings({ ...generalSettings(updated), ...currentPdf });
+      setDisplayCurrency(updated.currency || "CAD");
       toast.success("Settings saved");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Save failed");
@@ -390,6 +394,31 @@ export function SettingsPage() {
               </table>
             </div>
           )}
+        </div>
+        <div className="card">
+          <h2 className="card-title">{t("Currency")}</h2>
+          {fields(<Field
+            label={t("Currency")}
+            hint={t("Applies to new bookings and displays in the Booking Desk. Shopify payments always settle in your shop's currency.")}
+          >
+            <select
+              value={["CAD", "USD", "EUR", "GBP", "MXN", "AUD"].includes(settings.currency) ? settings.currency : "OTHER"}
+              onChange={(e) => set("currency", e.target.value === "OTHER" ? "" : e.target.value)}
+            >
+              {["CAD", "USD", "EUR", "GBP", "MXN", "AUD"].map((code) => <option key={code} value={code}>{code}</option>)}
+              <option value="OTHER">{t("Other...")}</option>
+            </select>
+            {!["CAD", "USD", "EUR", "GBP", "MXN", "AUD"].includes(settings.currency) && (
+              <input
+                aria-label={t("Other currency (ISO 3-letter code)")}
+                placeholder={t("Other currency (ISO 3-letter code)")}
+                value={settings.currency}
+                maxLength={3}
+                pattern="[A-Z]{3}"
+                onChange={(e) => set("currency", e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3))}
+              />
+            )}
+          </Field>, 1)}
         </div>
         <div className="card">
           <h2 className="card-title">{t("Content languages")}</h2>

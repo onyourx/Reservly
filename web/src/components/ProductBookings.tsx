@@ -82,7 +82,7 @@ export function ProductBookings({ productId, productNo }: { productId: string; p
                 <td>{lines.map((line) => <div key={line.id}>{fmtDateTime(line.from)} → {fmtDateTime(line.to)}</div>)}</td>
                 <td className="num">{lines.reduce((sum, line) => sum + line.qty, 0)}</td>
                 <td><span className="badge">{booking.channel}</span></td>
-                <td className="num">{money(booking.total)}</td>
+                <td className="num">{money(booking.total, booking.currency)}</td>
                 <td><StatusPill status={booking.status} /></td>
               </tr>;
             })}</tbody>

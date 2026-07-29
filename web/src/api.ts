@@ -406,6 +406,7 @@ export interface OperationsData {
 }
 
 export interface Settings {
+  currency: string;
   navBaseUrl: string;
   navMode: "mock" | "live";
   navUsername: string;

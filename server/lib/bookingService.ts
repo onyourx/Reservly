@@ -139,12 +139,12 @@ export async function createBooking(input: {
     `INSERT INTO bookings (id, ref, type, status, channel, store_id, customer_email, customer_first,
        customer_last, customer_phone, customer_b2b, subtotal, deposit, total, currency,
        shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, terms_accepted_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CAD', ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, ref, type, status, input.channel, input.storeId ?? null,
     input.customer.email, input.customer.firstName ?? "", input.customer.lastName ?? "",
     input.customer.phone ?? "", input.customer.b2b ? 1 : 0,
-    commerceTotal, quoted.deposit, commerceTotal,
+    commerceTotal, quoted.deposit, commerceTotal, settings.currency || "CAD",
     input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "", manageToken,
     j(storedResponses), input.termsAccepted === true ? now() : null, now(), now(),
   );

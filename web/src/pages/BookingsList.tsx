@@ -175,7 +175,7 @@ export function BookingsList() {
                     <td className="muted">{b.type}</td>
                     <td className="muted">{storeName(b.storeId)}</td>
                     <td className="muted">{lineDates(b)}</td>
-                    <td className="num">{money(b.total)}</td>
+                    <td className="num">{money(b.total, b.currency)}</td>
                     <td>
                       <StatusPill status={b.status} />
                     </td>

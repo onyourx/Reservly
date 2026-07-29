@@ -153,7 +153,7 @@ bookingRouter.post("/quote", (req, res) => {
       const validation = validateRentalWindow(line.from, line.to);
       if (!validation.ok) return res.status(400).json({ error: validation.error });
     }
-    res.json({ ...q, currency: "CAD" });
+    res.json({ ...q, currency: getSettings().currency || "CAD" });
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message ?? err) });
   }

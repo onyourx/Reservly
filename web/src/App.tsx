@@ -21,7 +21,8 @@ import { WaitlistPage } from "./pages/Waitlist";
 import { AvailabilityRulesPage } from "./pages/AvailabilityRules";
 import { Team } from "./pages/Team";
 import { useEffect, useState, type ReactNode } from "react";
-import { api } from "./api";
+import { api, type Settings } from "./api";
+import { setDisplayCurrency } from "./format";
 import { I18nProvider, useI18n, type UiLanguage } from "./components/I18n";
 
 type PermissionNeed = keyof AuthAccess["permissions"] | "manage";
@@ -160,6 +161,11 @@ function Shell() {
   // Platform super-admin context: shows the tenant banner when operating a
   // tenant other than the default.
   const [admin, setAdmin] = useState<{ email: string; tenant: string | null } | null>(null);
+  useEffect(() => {
+    api<{ settings: Partial<Settings> }>("/api/settings")
+      .then(({ settings }) => setDisplayCurrency(settings.currency || "CAD"))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     api<{ email: string; tenant: string | null }>("/api/admin/me").then(setAdmin).catch(() => setAdmin(null));
   }, []);

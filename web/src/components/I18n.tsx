@@ -5,6 +5,10 @@ type Messages = Record<string, string>;
 
 const messages: Record<UiLanguage, Messages> = {
   en: {
+    Currency: "Currency",
+    "Other...": "Other...",
+    "Other currency (ISO 3-letter code)": "Other currency (ISO 3-letter code)",
+    "Applies to new bookings and displays in the Booking Desk. Shopify payments always settle in your shop's currency.": "Applies to new bookings and displays in the Booking Desk. Shopify payments always settle in your shop's currency.",
     "Booking details": "Booking details", "Service time slot": "Service time slot",
     "I accept the terms and conditions": "I accept the terms and conditions", "View terms": "View terms",
     "Booking form answers": "Booking form answers", "Terms accepted": "Terms accepted", Required: "Required",
@@ -102,6 +106,10 @@ const messages: Record<UiLanguage, Messages> = {
     Email: "Email", Phone: "Phone", Seats: "Seats", Status: "Status",
   },
   fr: {
+    Currency: "Devise",
+    "Other...": "Autre...",
+    "Other currency (ISO 3-letter code)": "Autre devise (code ISO à 3 lettres)",
+    "Applies to new bookings and displays in the Booking Desk. Shopify payments always settle in your shop's currency.": "S'applique aux nouvelles réservations et s'affiche au Bureau de réservation. Les paiements Shopify se règlent toujours dans la devise de votre boutique.",
     "Booking details": "Détails de réservation", "Service time slot": "Créneau de service",
     "I accept the terms and conditions": "J'accepte les conditions générales", "View terms": "Voir les conditions",
     "Booking form answers": "Réponses au formulaire de réservation", "Terms accepted": "Conditions acceptées",
@@ -256,6 +264,10 @@ const messages: Record<UiLanguage, Messages> = {
     Seats: "Sièges",
   },
   es: {
+    Currency: "Moneda",
+    "Other...": "Otro...",
+    "Other currency (ISO 3-letter code)": "Otra moneda (código ISO de 3 letras)",
+    "Applies to new bookings and displays in the Booking Desk. Shopify payments always settle in your shop's currency.": "Se aplica a nuevas reservas y se muestra en el Escritorio de reservas. Los pagos de Shopify siempre se liquidan en la moneda de tu tienda.",
     "Booking details": "Detalles de la reserva", "Service time slot": "Intervalo de tiempo de servicio",
     "I accept the terms and conditions": "Acepto los términos y condiciones", "View terms": "Ver términos",
     "Booking form answers": "Respuestas al formulario de reserva", "Terms accepted": "Condiciones aceptadas",

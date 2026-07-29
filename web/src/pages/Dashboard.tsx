@@ -18,7 +18,7 @@ function BookingMini({ b }: { b: BookingLite }) {
           {" · "}
           {b.customer ? `${b.customer.firstName} ${b.customer.lastName}` : "—"}
         </div>
-        <div className="faint">{money(b.total)}</div>
+        <div className="faint">{money(b.total, b.currency)}</div>
       </div>
       <StatusPill status={b.status} />
     </div>

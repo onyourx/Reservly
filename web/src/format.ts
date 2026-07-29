@@ -1,6 +1,11 @@
-// Formatting helpers: dates like "Jul 5, 2026 14:00", money as CA$.
+// Formatting helpers: dates like "Jul 5, 2026 14:00" and tenant-aware money.
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+let displayCurrency = "CAD";
+
+export function setDisplayCurrency(code: string): void {
+  displayCurrency = code;
+}
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -30,14 +35,21 @@ export function fmtTime(iso: string | null | undefined): string {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-/** "CA$1,234.50" */
-export function money(n: number | null | undefined): string {
+export function money(n: number | null | undefined, currency?: string): string {
   if (n === null || n === undefined || Number.isNaN(n)) return "—";
+  const curr = currency || displayCurrency;
   const sign = n < 0 ? "-" : "";
-  return `${sign}CA$${Math.abs(n).toLocaleString("en-CA", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  try {
+    return `${sign}${new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: curr,
+    }).format(Math.abs(n))}`;
+  } catch {
+    return `${sign}${curr} ${Math.abs(n).toLocaleString("en-CA", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
 }
 
 /** Local date as YYYY-MM-DD (for /print/daily and availability queries). */

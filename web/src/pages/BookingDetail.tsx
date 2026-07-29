@@ -413,7 +413,7 @@ export function BookingDetail() {
               <div className="meta-item">
                 <span className="meta-label">{t("No-show fee status")}</span>
                 <span>
-                  {money(Number(b.noShowFee))}{" "}
+                  {money(Number(b.noShowFee), b.currency)}{" "}
                   <span className="badge">
                     {t(b.noShowFeeStatus === "PENDING_PAYMENT" ? "Payable at store"
                       : b.noShowFeeStatus === "INVOICED" ? "Invoiced"
@@ -668,8 +668,8 @@ export function BookingDetail() {
                   </td>
                   <td className="num">{l.days ?? "—"}</td>
                   <td className="num">{l.qty}</td>
-                  <td className="num">{money(l.unitPrice)}</td>
-                  <td className="num">{money(l.lineTotal)}</td>
+                  <td className="num">{money(l.unitPrice, b.currency)}</td>
+                  <td className="num">{money(l.lineTotal, b.currency)}</td>
                   <td className="mono faint">
                     {l.activityNo ? `Act ${l.activityNo}` : ""}
                     {l.activityNo && l.bookingRef ? " · " : ""}
@@ -691,7 +691,7 @@ export function BookingDetail() {
                   <span>
                     <span className="mono">{d.itemNo}</span> — {d.note}
                   </span>
-                  <span>{money(d.charge)}</span>
+                  <span>{money(d.charge, b.currency)}</span>
                 </div>
               )),
             )}
@@ -705,24 +705,24 @@ export function BookingDetail() {
           <h2 className="card-title">Financials</h2>
           <div className="fin-row">
             <span className="muted">Subtotal</span>
-            <span>{money(b.subtotal)}</span>
+            <span>{money(b.subtotal, b.currency)}</span>
           </div>
           <div className="fin-row">
             <span className="muted">Deposit</span>
-            <span>{money(b.deposit)}</span>
+            <span>{money(b.deposit, b.currency)}</span>
           </div>
           <div className="fin-row total">
             <span>Total</span>
-            <span>{money(b.total)}</span>
+            <span>{money(b.total, b.currency)}</span>
           </div>
           <div className="fin-row">
             <span className="muted">POS total</span>
-            <span>{b.posTotal != null ? money(b.posTotal) : "—"}</span>
+            <span>{b.posTotal != null ? money(b.posTotal, b.currency) : "—"}</span>
           </div>
           {b.refundDue !== undefined && (
             <div className="fin-row">
               <span className="muted">Refund due</span>
-              <span style={{ fontWeight: 650 }}>{money(b.refundDue)}</span>
+              <span style={{ fontWeight: 650 }}>{money(b.refundDue, b.currency)}</span>
             </div>
           )}
           {b.posReceiptNo && (
@@ -745,7 +745,7 @@ export function BookingDetail() {
               {b.addons.map((a, i) => (
                 <div className="fin-row" key={`${a.productNo}-${i}`}>
                   <span>{a.name} <span className="faint">× {a.qty}</span></span>
-                  <span>{money(a.unitPrice * a.qty)}</span>
+                  <span>{money(a.unitPrice * a.qty, b.currency)}</span>
                 </div>
               ))}
             </>
@@ -798,7 +798,7 @@ export function BookingDetail() {
                     {" "}
                     {fmtDate(request.oldDateTo)} → {fmtDate(request.newDateTo)}
                   </div>
-                  <div className="faint">{money(request.price)}</div>
+                  <div className="faint">{money(request.price, b.currency)}</div>
                   {rejectingExtensionId === request.id && (
                     <div style={{ marginTop: 8 }}>
                       <textarea

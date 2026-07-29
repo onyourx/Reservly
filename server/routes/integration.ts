@@ -27,7 +27,7 @@ export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
 
-export const SAFE_KEYS = ["navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupEnabled", "reminderReturnEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml"];
+export const SAFE_KEYS = ["currency", "navMode", "navBaseUrl", "navUsername", "navDomain", "shopifyShop", "shopifyClientId", "sftpHost", "sftpPort", "sftpUser", "sftpPath", "conduitUrl", "posStoreId", "posTerminalId", "posStaffId", "idRetentionDays", "dataRetentionDays", "publicUrl", "contractTemplate", "enabledLanguages", "zoomAccountId", "zoomClientId", "zoomUserId", "slotHoldMinutes", "maxCustomerReschedules", "extensionsEnabled", "extensionApproval", "noShowFeeMode", "noShowFeeValue", "reminderHours", "remindersEnabled", "reminderPickupEnabled", "reminderReturnEnabled", "reminderPickupHours", "reminderReturnHours", "reminderPickupSubject", "reminderPickupTemplate", "reminderReturnSubject", "reminderReturnTemplate", "cancelPolicyEnabled", "cancelFullRefundDays", "cancelPartialRefundDays", "cancelPartialRefundPercent", "pickupEarliestTime", "returnByTime", "serviceOpenTime", "serviceCloseTime", "rentalIncrementUnit", "rentalIncrementValue", "termsRentalEnabled", "termsCourseEnabled", "termsServiceEnabled", "termsRentalHtml", "termsCourseHtml", "termsServiceHtml"];
 
 settingsRouter.get("/health", (_req, res) => {
   res.json({
@@ -88,6 +88,17 @@ settingsRouter.get("/settings", (_req, res) => {
 
 settingsRouter.put("/settings", requireOwner, (req, res) => {
   const { adminPassword, sftpPassword, sftpPasswordEnc: _ignoredSftpPasswordEnc, ...rest } = req.body ?? {};
+  if ("currency" in rest) {
+    const normalized = String(rest.currency ?? "").toUpperCase().trim();
+    if (!normalized) {
+      delete rest.currency;
+    } else {
+      if (!/^[A-Z]{3}$/.test(normalized)) {
+        return res.status(400).json({ error: "invalid_currency" });
+      }
+      rest.currency = normalized;
+    }
+  }
   try {
     if (adminPassword) setAdminPassword(String(adminPassword));
   } catch (err) {
@@ -591,7 +602,7 @@ proxyRouter.get("/quote", (req, res) => {
       type: type as "RENTAL" | "COURSE" | "SERVICE",
       productNo, storeId, from, to, sessionId, qty: Number(qty) || 1,
     }]);
-    res.json({ ...q, currency: "CAD" });
+    res.json({ ...q, currency: getSettings().currency || "CAD" });
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message ?? err) });
   }
