@@ -5,6 +5,7 @@ import type {
   AvailabilitySlot,
   Product,
   Resource,
+  ResourceBlock,
   ResourceType,
   Session,
   SessionAttendees,
@@ -434,6 +435,213 @@ function ScheduleTab() {
 
 /* ---------------- Resources tab ---------------- */
 
+const isoDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+function ResourceScheduleEditor({ resource, onChanged }: { resource: Resource; onChanged: () => void }) {
+  const toast = useToast();
+  const { t } = useI18n();
+  const [capacity, setCapacity] = useState(String(resource.capacity ?? 0));
+  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [fromTime, setFromTime] = useState("09:00");
+  const [toTime, setToTime] = useState("17:00");
+  const [startDate, setStartDate] = useState(todayISO());
+  const [endDate, setEndDate] = useState(() => {
+    const date = new Date();
+    date.setDate(date.getDate() + 56);
+    return isoDate(date);
+  });
+  const [replace, setReplace] = useState(false);
+  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
+  const [blocks, setBlocks] = useState<ResourceBlock[]>([]);
+  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const [windowFrom, setWindowFrom] = useState("09:00");
+  const [windowTo, setWindowTo] = useState("17:00");
+  const [blockFrom, setBlockFrom] = useState("14:00");
+  const [blockTo, setBlockTo] = useState("16:00");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const calendarDays = useMemo(() => {
+    const first = new Date(month.getFullYear(), month.getMonth(), 1);
+    const gridStart = new Date(first);
+    gridStart.setDate(first.getDate() - first.getDay());
+    return Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + index);
+      return date;
+    });
+  }, [month]);
+  const load = useCallback(async () => {
+    const from = isoDate(calendarDays[0]);
+    const to = isoDate(calendarDays[calendarDays.length - 1]);
+    try {
+      const [availability, blockData] = await Promise.all([
+        api<{ slots: AvailabilitySlot[] }>(`/api/resources/${resource.id}/availability${qs({ from, to })}`),
+        api<{ blocks: ResourceBlock[] }>(`/api/resources/${resource.id}/blocks${qs({ from, to })}`),
+      ]);
+      setSlots(availability.slots);
+      setBlocks(blockData.blocks);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load schedule");
+    }
+  }, [calendarDays, resource.id, toast]);
+  useEffect(() => { void load(); }, [load]);
+
+  const execute = async (action: () => Promise<unknown>, success?: string) => {
+    setBusy(true);
+    try {
+      await action();
+      if (success) toast.success(success);
+      await load();
+    } catch (error) {
+      toast.error(
+        error instanceof Error && error.message === "range_too_long"
+          ? t("Range exceeds 26 weeks")
+          : error instanceof Error
+            ? error.message
+            : "Schedule update failed",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const weekdayLabels = [
+    [1, t("Monday")], [2, t("Tuesday")], [3, t("Wednesday")], [4, t("Thursday")],
+    [5, t("Friday")], [6, t("Saturday")], [0, t("Sunday")],
+  ] as const;
+  const selectedSlots = slots.filter((slot) => slot.date === selectedDate);
+  const selectedBlocks = blocks.filter((block) => block.date === selectedDate);
+
+  return (
+    <div>
+      <div className="form-grid-3">
+        <Field label={t("Room capacity")}>
+          <input type="number" min={0} value={capacity} onChange={(event) => setCapacity(event.target.value)} />
+        </Field>
+        <div style={{ alignSelf: "end" }}>
+          <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => void execute(
+            async () => {
+              await api(`/api/resources/${resource.id}`, { method: "PUT", body: { capacity: Number(capacity) || 0 } });
+              onChanged();
+            },
+            t("Capacity") + " saved",
+          )}>Save</button>
+        </div>
+      </div>
+
+      <hr className="divider" />
+      <h3>{t("Weekly pattern")}</h3>
+      <div className="btn-row" style={{ marginBottom: 12 }}>
+        {weekdayLabels.map(([value, label]) => (
+          <label className="checkbox-row" key={value}>
+            <input type="checkbox" checked={days.includes(value)} onChange={(event) =>
+              setDays(event.target.checked ? [...days, value] : days.filter((day) => day !== value))} />
+            {label}
+          </label>
+        ))}
+      </div>
+      <div className="form-grid-3">
+        <Field label={t("From time")}><input type="time" value={fromTime} onChange={(event) => setFromTime(event.target.value)} /></Field>
+        <Field label={t("To time")}><input type="time" value={toTime} onChange={(event) => setToTime(event.target.value)} /></Field>
+        <Field label={t("Start date")}><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></Field>
+        <Field label={t("End date")}><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></Field>
+        <label className="checkbox-row" style={{ alignSelf: "end" }}>
+          <input type="checkbox" checked={replace} onChange={(event) => setReplace(event.target.checked)} />
+          {t("Replace existing")}
+        </label>
+        <button className="btn btn-primary btn-sm" style={{ alignSelf: "end" }} disabled={busy || days.length === 0}
+          onClick={() => void execute(async () => {
+            const result = await api<{ created: number }>(`/api/resources/${resource.id}/availability/bulk`, {
+              body: { days, fromTime, toTime, startDate, endDate, replace },
+            });
+            toast.success(`${t("Availability slots created")}: ${result.created}`);
+          })}>
+          {t("Apply")}
+        </button>
+      </div>
+
+      <hr className="divider" />
+      <div className="calendar-head">
+        <h3>{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</h3>
+        <div className="calendar-controls">
+          <button className="btn btn-sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
+          <button className="btn btn-sm" onClick={() => setMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}>Today</button>
+          <button className="btn btn-sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
+        </div>
+      </div>
+      <div className="calendar-grid">
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <div className="calendar-weekday" key={day}>{day}</div>)}
+        {calendarDays.map((date) => {
+          const key = isoDate(date);
+          return (
+            <button type="button" key={key}
+              className={`calendar-day selectable${date.getMonth() !== month.getMonth() ? " outside" : ""}${key === selectedDate ? " sel-start" : ""}`}
+              onClick={() => setSelectedDate(key)}>
+              <span className="calendar-date">{date.getDate()}</span>
+              <span className="session-chip-list">
+                {slots.filter((slot) => slot.date === key).map((slot) => (
+                  <span className="session-chip" style={{ background: "var(--ok-soft)", borderColor: "var(--ok)" }} key={slot.id}>{slot.from}–{slot.to}</span>
+                ))}
+                {blocks.filter((block) => block.date === key).map((block) => (
+                  <span className="session-chip full" style={{ background: "#fff4f3", borderColor: "var(--danger)", opacity: 1 }} title={block.reason} key={block.id}>
+                    {block.fromTime}–{block.toTime}
+                  </span>
+                ))}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <hr className="divider" />
+      <h3>{selectedDate}</h3>
+      <div className="grid-2">
+        <div>
+          <h4>{t("Existing windows")}</h4>
+          {selectedSlots.length === 0 ? <div className="faint">—</div> : selectedSlots.map((slot) => (
+            <div className="btn-row" key={slot.id}>{slot.from}–{slot.to}
+              <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void execute(
+                () => api(`/api/resources/${resource.id}/availability/${slot.id}`, { method: "DELETE" }), "Deleted",
+              )}>Delete</button>
+            </div>
+          ))}
+          <h4>{t("Add window")}</h4>
+          <div className="btn-row">
+            <input type="time" value={windowFrom} onChange={(event) => setWindowFrom(event.target.value)} />
+            <input type="time" value={windowTo} onChange={(event) => setWindowTo(event.target.value)} />
+            <button className="btn btn-sm" disabled={busy} onClick={() => void execute(
+              () => api(`/api/resources/${resource.id}/availability`, { body: { date: selectedDate, fromTime: windowFrom, toTime: windowTo } }),
+              t("Add window"),
+            )}>{t("Add window")}</button>
+          </div>
+        </div>
+        <div>
+          <h4>{t("Existing blocks")}</h4>
+          {selectedBlocks.length === 0 ? <div className="faint">—</div> : selectedBlocks.map((block) => (
+            <div className="btn-row" key={block.id}>{block.fromTime}–{block.toTime} {block.reason && `(${block.reason})`}
+              <button className="btn btn-danger btn-sm" disabled={busy} onClick={() => void execute(
+                () => api(`/api/resources/${resource.id}/blocks/${block.id}`, { method: "DELETE" }), "Deleted",
+              )}>Delete</button>
+            </div>
+          ))}
+          <h4>{t("Block time")}</h4>
+          <div className="btn-row">
+            <input type="time" value={blockFrom} onChange={(event) => setBlockFrom(event.target.value)} />
+            <input type="time" value={blockTo} onChange={(event) => setBlockTo(event.target.value)} />
+            <input type="text" value={reason} placeholder={t("Reason")} onChange={(event) => setReason(event.target.value)} />
+            <button className="btn btn-sm" disabled={busy} onClick={() => void execute(
+              () => api(`/api/resources/${resource.id}/blocks`, { body: { date: selectedDate, fromTime: blockFrom, toTime: blockTo, reason } }),
+              t("Block time"),
+            )}>{t("Block time")}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AvailabilityPanel({ resource }: { resource: Resource }) {
   const toast = useToast();
   const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
@@ -452,7 +660,7 @@ function AvailabilityPanel({ resource }: { resource: Resource }) {
   useEffect(load, [load]);
 
   const importCsv = async () => {
-    const parsed: AvailabilitySlot[] = csv
+    const parsed: { date: string; from: string; to: string }[] = csv
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
@@ -544,6 +752,7 @@ function ResourceColumn({
   selectedId,
   onSelect,
   onChanged,
+  onSchedule,
 }: {
   type: ResourceType;
   title: string;
@@ -551,6 +760,7 @@ function ResourceColumn({
   selectedId: string | null;
   onSelect: (r: Resource) => void;
   onChanged: () => void;
+  onSchedule: (r: Resource) => void;
 }) {
   const toast = useToast();
   const { stores, storeName } = useStores();
@@ -558,6 +768,7 @@ function ResourceColumn({
   const [resStore, setResStore] = useState("");
   const [notes, setNotes] = useState("");
   const [adding, setAdding] = useState(false);
+  const [capacities, setCapacities] = useState<Record<string, string>>({});
 
   const add = async () => {
     if (!name.trim() || !resStore) {
@@ -609,17 +820,26 @@ function ResourceColumn({
               {storeName(r.storeId)}
               {r.notes ? ` · ${r.notes}` : ""}
             </div>
+            {type === "ROOM" && (
+              <input type="number" min={0} aria-label="Capacity" style={{ marginTop: 6, width: 100 }}
+                value={capacities[r.id] ?? String(r.capacity ?? 0)}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => setCapacities({ ...capacities, [r.id]: event.target.value })}
+                onBlur={() => void api(`/api/resources/${r.id}`, {
+                  method: "PUT", body: { capacity: Number(capacities[r.id] ?? r.capacity) || 0 },
+                }).then(onChanged).catch((error: Error) => toast.error(error.message))} />
+            )}
           </div>
-          <button
-            type="button"
-            className="btn btn-danger btn-sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              void remove(r);
-            }}
-          >
-            Delete
-          </button>
+          <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={(event) => {
+              event.stopPropagation();
+              onSchedule(r);
+            }}>Schedule</button>
+            <button type="button" className="btn btn-danger btn-sm" onClick={(e) => {
+                e.stopPropagation();
+                void remove(r);
+              }}>Delete</button>
+          </div>
         </div>
       ))}
 
@@ -663,6 +883,7 @@ function ResourcesTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Resource | null>(null);
+  const [scheduledRoom, setScheduledRoom] = useState<Resource | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -697,6 +918,7 @@ function ResourcesTab() {
           selectedId={selected?.id ?? null}
           onSelect={setSelected}
           onChanged={load}
+          onSchedule={setScheduledRoom}
         />
         <ResourceColumn
           type="TRAINER"
@@ -705,6 +927,7 @@ function ResourcesTab() {
           selectedId={selected?.id ?? null}
           onSelect={setSelected}
           onChanged={load}
+          onSchedule={setScheduledRoom}
         />
       </div>
       <div style={{ height: 18 }} />
@@ -717,6 +940,11 @@ function ResourcesTab() {
             hint="Click a resource above to manage its availability."
           />
         </div>
+      )}
+      {scheduledRoom && (
+        <Modal title={`Schedule — ${scheduledRoom.name}`} onClose={() => setScheduledRoom(null)} wide>
+          <ResourceScheduleEditor resource={scheduledRoom} onChanged={load} />
+        </Modal>
       )}
     </>
   );

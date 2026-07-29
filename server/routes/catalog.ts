@@ -1006,11 +1006,49 @@ catalogRouter.post("/sessions", requirePerm("sessions"), async (req, res) => {
   const n = Math.max(1, Math.min(12, Number(occurrences) || 1));
   const out: any[] = [];
   const product = db.prepare("SELECT name FROM products WHERE id=?").get(productId) as { name: string } | undefined;
-  for (let i = 0; i < n; i++) {
+  const occurrenceTimes = Array.from({ length: n }, (_, i) => {
     const offset = i * (Number(intervalDays) || 7) * 86_400_000;
+    return {
+      start: new Date(new Date(startsAt).getTime() + offset).toISOString(),
+      end: new Date(new Date(endsAt).getTime() + offset).toISOString(),
+    };
+  });
+  const resourceIds = [
+    ...(roomId ? [String(roomId)] : []),
+    ...((Array.isArray(trainerIds) ? trainerIds : []).map(String)),
+  ];
+  const localParts = (iso: string) => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: process.env.BOOKING_TZ || "America/Toronto",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(iso));
+    const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+    return { date: `${value("year")}-${value("month")}-${value("day")}`, time: `${value("hour")}:${value("minute")}` };
+  };
+  for (const occurrence of occurrenceTimes) {
+    const start = localParts(occurrence.start);
+    const end = localParts(occurrence.end);
+    for (const resourceId of resourceIds) {
+      const blocked = db.prepare(
+        `SELECT b.reason, r.id, r.name
+         FROM resource_blocks b JOIN resources r ON r.id = b.resource_id
+         WHERE b.resource_id = ? AND b.date = ? AND b.from_time < ? AND b.to_time > ?
+         ORDER BY b.from_time LIMIT 1`,
+      ).get(resourceId, start.date, end.time, start.time) as { reason: string; id: string; name: string } | undefined;
+      if (blocked) {
+        return res.status(409).json({
+          error: "resource_blocked",
+          resource: { id: blocked.id, name: blocked.name },
+          reason: blocked.reason ?? "",
+        });
+      }
+    }
+  }
+  for (let i = 0; i < n; i++) {
     const id = uid();
-    const occurrenceStart = new Date(new Date(startsAt).getTime() + offset).toISOString();
-    const occurrenceEnd = new Date(new Date(endsAt).getTime() + offset).toISOString();
+    const occurrenceStart = occurrenceTimes[i].start;
+    const occurrenceEnd = occurrenceTimes[i].end;
     let joinUrl = String(meetingUrl || ""), hostUrl = "", zoomId = "";
     if (createZoom && deliveryMode !== "IN_PERSON") {
       try {
@@ -1100,15 +1138,29 @@ catalogRouter.get("/resources", requirePerm("sessions"), (req, res) => {
   const rows = type
     ? db.prepare("SELECT * FROM resources WHERE type = ? ORDER BY name").all(type)
     : db.prepare("SELECT * FROM resources ORDER BY type, name").all();
-  res.json({ resources: (rows as any[]).map((r) => ({ id: r.id, type: r.type, name: r.name, storeId: r.store_id, notes: r.notes })) });
+  res.json({ resources: (rows as any[]).map((r) => ({ id: r.id, type: r.type, name: r.name, storeId: r.store_id, notes: r.notes, capacity: Number(r.capacity) || 0 })) });
 });
 
 catalogRouter.post("/resources", requirePerm("sessions"), (req, res) => {
-  const { type, name, storeId, notes = "" } = req.body ?? {};
+  const { type, name, storeId, notes = "", capacity = 0 } = req.body ?? {};
   if (!type || !name) return res.status(400).json({ error: "type and name are required" });
+  if (!["ROOM", "TRAINER"].includes(type)) return res.status(400).json({ error: "invalid resource type" });
+  if (!Number.isInteger(Number(capacity)) || Number(capacity) < 0) return res.status(400).json({ error: "capacity must be a non-negative integer" });
   const id = uid();
-  db.prepare("INSERT INTO resources (id, type, name, store_id, notes) VALUES (?, ?, ?, ?, ?)").run(id, type, name, storeId ?? null, notes);
-  res.json({ resource: { id, type, name, storeId, notes } });
+  db.prepare("INSERT INTO resources (id, type, name, store_id, notes, capacity) VALUES (?, ?, ?, ?, ?, ?)").run(id, type, String(name).trim(), storeId ?? null, String(notes), Number(capacity));
+  res.json({ resource: { id, type, name: String(name).trim(), storeId, notes: String(notes), capacity: Number(capacity) } });
+});
+
+catalogRouter.put("/resources/:id", requirePerm("sessions"), (req, res) => {
+  const existing = db.prepare("SELECT * FROM resources WHERE id = ?").get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: "resource_not_found" });
+  const name = req.body?.name === undefined ? existing.name : String(req.body.name).trim();
+  const notes = req.body?.notes === undefined ? existing.notes : String(req.body.notes);
+  const capacity = req.body?.capacity === undefined ? Number(existing.capacity) || 0 : Number(req.body.capacity);
+  if (!name) return res.status(400).json({ error: "name is required" });
+  if (!Number.isInteger(capacity) || capacity < 0) return res.status(400).json({ error: "capacity must be a non-negative integer" });
+  db.prepare("UPDATE resources SET name = ?, notes = ?, capacity = ? WHERE id = ?").run(name, notes, capacity, existing.id);
+  res.json({ resource: { id: existing.id, type: existing.type, name, storeId: existing.store_id, notes, capacity } });
 });
 
 catalogRouter.delete("/resources/:id", requirePerm("sessions"), (req, res) => {
@@ -1118,23 +1170,92 @@ catalogRouter.delete("/resources/:id", requirePerm("sessions"), (req, res) => {
 
 /** Bulk availability upload (class step 3B: trainers' schedules come in as CSV). */
 catalogRouter.post("/resources/:id/availability", requirePerm("sessions"), (req, res) => {
-  const slots: { date: string; from: string; to: string }[] = req.body?.slots ?? [];
+  const slots: { date: string; from: string; to: string }[] = Array.isArray(req.body?.slots)
+    ? req.body.slots
+    : req.body?.date ? [{ date: req.body.date, from: req.body.fromTime, to: req.body.toTime }] : [];
   const ins = db.prepare("INSERT INTO resource_availability (id, resource_id, date, from_time, to_time) VALUES (?, ?, ?, ?, ?)");
   let added = 0;
   for (const s of slots) {
-    if (!s.date || !s.from || !s.to) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s.date) || !/^\d{2}:\d{2}$/.test(s.from) || !/^\d{2}:\d{2}$/.test(s.to) || s.from >= s.to) continue;
     ins.run(uid(), req.params.id, s.date, s.from, s.to);
     added++;
   }
+  if (slots.length === 1 && added === 0) return res.status(400).json({ error: "invalid availability window" });
   res.json({ added });
 });
 
 catalogRouter.get("/resources/:id/availability", requirePerm("sessions"), (req, res) => {
   const { from, to } = req.query as Record<string, string>;
-  let sql = "SELECT date, from_time AS \"from\", to_time AS \"to\" FROM resource_availability WHERE resource_id = ?";
+  let sql = "SELECT id, date, from_time AS \"from\", to_time AS \"to\" FROM resource_availability WHERE resource_id = ?";
   const params: unknown[] = [req.params.id];
   if (from) { sql += " AND date >= ?"; params.push(from); }
   if (to) { sql += " AND date <= ?"; params.push(to); }
   sql += " ORDER BY date LIMIT 500";
   res.json({ slots: db.prepare(sql).all(...params) });
+});
+
+catalogRouter.delete("/resources/:id/availability/:rowId", requirePerm("sessions"), (req, res) => {
+  db.prepare("DELETE FROM resource_availability WHERE id = ? AND resource_id = ?").run(req.params.rowId, req.params.id);
+  res.json({ ok: true });
+});
+
+catalogRouter.post("/resources/:id/availability/bulk", requirePerm("sessions"), (req, res) => {
+  const { days, fromTime, toTime, startDate, endDate, replace = false } = req.body ?? {};
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  const timePattern = /^\d{2}:\d{2}$/;
+  if (!Array.isArray(days) || days.length === 0 || days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    return res.status(400).json({ error: "days must be an array of weekdays from 0 to 6" });
+  }
+  if (!timePattern.test(fromTime) || !timePattern.test(toTime) || fromTime >= toTime) return res.status(400).json({ error: "invalid time range" });
+  if (!datePattern.test(startDate) || !datePattern.test(endDate) || startDate > endDate) return res.status(400).json({ error: "invalid date range" });
+  const start = new Date(`${startDate}T00:00:00Z`);
+  const end = new Date(`${endDate}T00:00:00Z`);
+  const maxDate = new Date(start);
+  maxDate.setUTCDate(maxDate.getUTCDate() + (26 * 7) - 1);
+  if (end > maxDate) {
+    return res.status(400).json({ error: "range_too_long", maxWeeks: 26 });
+  }
+  const matchingDates: string[] = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    if (days.includes(cursor.getUTCDay())) matchingDates.push(cursor.toISOString().slice(0, 10));
+  }
+  if (matchingDates.length > 400) return res.status(400).json({ error: "availability range exceeds 400 rows" });
+  const apply = db.transaction(() => {
+    if (replace) {
+      db.prepare("DELETE FROM resource_availability WHERE resource_id = ? AND date BETWEEN ? AND ?")
+        .run(req.params.id, startDate, end.toISOString().slice(0, 10));
+    }
+    const insert = db.prepare("INSERT INTO resource_availability (id, resource_id, date, from_time, to_time) VALUES (?, ?, ?, ?, ?)");
+    for (const date of matchingDates) insert.run(uid(), req.params.id, date, fromTime, toTime);
+  });
+  apply();
+  res.json({ created: matchingDates.length });
+});
+
+catalogRouter.get("/resources/:id/blocks", requirePerm("sessions"), (req, res) => {
+  const { from, to } = req.query as Record<string, string>;
+  let sql = `SELECT id, date, from_time AS fromTime, to_time AS toTime, reason, source, created_at AS createdAt
+    FROM resource_blocks WHERE resource_id = ?`;
+  const params: unknown[] = [req.params.id];
+  if (from) { sql += " AND date >= ?"; params.push(from); }
+  if (to) { sql += " AND date <= ?"; params.push(to); }
+  sql += " ORDER BY date, from_time";
+  res.json({ blocks: db.prepare(sql).all(...params) });
+});
+
+catalogRouter.post("/resources/:id/blocks", requirePerm("sessions"), (req, res) => {
+  const { date, fromTime, toTime, reason = "" } = req.body ?? {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(fromTime) || !/^\d{2}:\d{2}$/.test(toTime) || fromTime >= toTime) {
+    return res.status(400).json({ error: "invalid block date or time range" });
+  }
+  const block = { id: uid(), date, fromTime, toTime, reason: String(reason), source: "MANUAL", createdAt: now() };
+  db.prepare(`INSERT INTO resource_blocks (id, resource_id, date, from_time, to_time, reason, source, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(block.id, req.params.id, block.date, block.fromTime, block.toTime, block.reason, block.source, block.createdAt);
+  res.json({ block });
+});
+
+catalogRouter.delete("/resources/:id/blocks/:blockId", requirePerm("sessions"), (req, res) => {
+  db.prepare("DELETE FROM resource_blocks WHERE id = ? AND resource_id = ?").run(req.params.blockId, req.params.id);
+  res.json({ ok: true });
 });

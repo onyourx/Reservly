@@ -164,12 +164,24 @@ export interface Resource {
   name: string;
   storeId: string;
   notes: string;
+  capacity: number;
 }
 
 export interface AvailabilitySlot {
+  id: string;
   date: string;
   from: string;
   to: string;
+}
+
+export interface ResourceBlock {
+  id: string;
+  date: string;
+  fromTime: string;
+  toTime: string;
+  reason: string;
+  source: string;
+  createdAt: string;
 }
 
 export interface RentalAvailability {

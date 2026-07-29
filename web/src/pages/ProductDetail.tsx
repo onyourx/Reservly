@@ -71,6 +71,7 @@ export function ProductDetail() {
   const [sessRoom, setSessRoom] = useState("");
   const [sessTrainers, setSessTrainers] = useState<string[]>([]);
   const [sessCapacity, setSessCapacity] = useState(8);
+  const [sessCapacityTouched, setSessCapacityTouched] = useState(false);
   const [occurrences, setOccurrences] = useState(1);
   const [intervalDays, setIntervalDays] = useState(7);
   const [deliveryMode, setDeliveryMode] = useState<"IN_PERSON" | "VIRTUAL" | "HYBRID">("IN_PERSON");
@@ -1078,11 +1079,16 @@ export function ProductDetail() {
                 </select>
               </Field>
               <Field label="Room">
-                <select value={sessRoom} onChange={(e) => setSessRoom(e.target.value)}>
+                <select value={sessRoom} onChange={(e) => {
+                  const nextRoomId = e.target.value;
+                  setSessRoom(nextRoomId);
+                  const room = rooms.find((candidate) => candidate.id === nextRoomId);
+                  if (!sessCapacityTouched && room && room.capacity > 0) setSessCapacity(room.capacity);
+                }}>
                   <option value="">No room</option>
                   {rooms.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r.name} ({storeName(r.storeId)})
+                      {r.name} ({storeName(r.storeId)}){r.capacity > 0 ? ` (cap ${r.capacity})` : ""}
                     </option>
                   ))}
                 </select>
@@ -1107,8 +1113,17 @@ export function ProductDetail() {
                   type="number"
                   min={1}
                   value={sessCapacity}
-                  onChange={(e) => setSessCapacity(Math.max(1, Number(e.target.value) || 1))}
+                  onChange={(e) => {
+                    setSessCapacityTouched(true);
+                    setSessCapacity(Math.max(1, Number(e.target.value) || 1));
+                  }}
                 />
+                {(() => {
+                  const room = rooms.find((candidate) => candidate.id === sessRoom);
+                  return room && room.capacity > 0 && sessCapacity > room.capacity
+                    ? <div style={{ color: "#9a6700", fontSize: 12, marginTop: 4 }}>{t("Exceeds room capacity")} ({room.capacity})</div>
+                    : null;
+                })()}
               </Field>
               <Field
                 label="Occurrences"

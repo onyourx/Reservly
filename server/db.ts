@@ -142,7 +142,8 @@ CREATE TABLE IF NOT EXISTS resources (
   type TEXT NOT NULL,               -- ROOM | TRAINER
   name TEXT NOT NULL,
   store_id TEXT REFERENCES stores(id),
-  notes TEXT DEFAULT ''
+  notes TEXT DEFAULT '',
+  capacity INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS resource_availability (
@@ -151,6 +152,17 @@ CREATE TABLE IF NOT EXISTS resource_availability (
   date TEXT NOT NULL,               -- YYYY-MM-DD
   from_time TEXT NOT NULL,          -- HH:MM
   to_time TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS resource_blocks (
+  id TEXT PRIMARY KEY,
+  resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  from_time TEXT NOT NULL,
+  to_time TEXT NOT NULL,
+  reason TEXT DEFAULT '',
+  source TEXT DEFAULT 'MANUAL',
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (            -- course instances; series share series_id
@@ -453,6 +465,7 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE sessions ADD COLUMN meeting_url TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE sessions ADD COLUMN meeting_host_url TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE sessions ADD COLUMN zoom_meeting_id TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE resources ADD COLUMN capacity INTEGER DEFAULT 0",
     "ALTER TABLE products ADD COLUMN buffer_before INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE products ADD COLUMN buffer_after INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE products ADD COLUMN min_notice_hours INTEGER NOT NULL DEFAULT 0",
@@ -487,6 +500,20 @@ CREATE TABLE IF NOT EXISTS staff_users (
     } catch {
       /* column already exists */
     }
+  }
+  try {
+    d.exec(`CREATE TABLE IF NOT EXISTS resource_blocks (
+      id TEXT PRIMARY KEY,
+      resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      from_time TEXT NOT NULL,
+      to_time TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      source TEXT DEFAULT 'MANUAL',
+      created_at TEXT NOT NULL
+    )`);
+  } catch {
+    /* table already exists */
   }
   // Backfill the legacy bilingual fields into the extensible translation model.
   d.exec(`INSERT OR IGNORE INTO product_translations(product_id,locale,name,description)
