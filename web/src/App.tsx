@@ -149,7 +149,7 @@ function NavGroupRow({ group, children }: { group: NavGroup; children: NavItem[]
 }
 
 function Shell() {
-  const { language, setLanguage, t } = useI18n();
+  const { t } = useI18n();
   const { access } = useAuth();
   const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -238,21 +238,27 @@ function Shell() {
         {menuOpen && (
           <div className="mobile-drawer">
             {NAV_ITEMS.map((entry) => {
-              if ("children" in entry && entry.label === "Settings") return null;
               if ("children" in entry) {
                 const visibleChildren = entry.children.filter(canSee);
                 if (visibleChildren.length === 0) return null;
-                return visibleChildren.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end}
-                    className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    {t(item.label)}
-                  </NavLink>
-                ));
+                return (
+                  <div className="drawer-section" key={entry.label}>
+                    <div className="drawer-section-heading">{t(entry.label)}</div>
+                    <div className="drawer-section-items">
+                      {visibleChildren.map((item) => (
+                        <NavLink
+                          key={item.to}
+                          to={item.to}
+                          end={item.end}
+                          className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+                          onClick={() => setMenuOpen(false)}
+                        >
+                          {t(item.label)}
+                        </NavLink>
+                      ))}
+                    </div>
+                  </div>
+                );
               }
               if (entry.to === "/tenants" && !admin) return null;
               if (!canSee(entry)) return null;
@@ -280,12 +286,6 @@ function Shell() {
           </div>
         )}
         <header className="topbar">
-          <label className="store-selector">
-            <span className="store-selector-label">{t("Admin language")}</span>
-            <select value={language} onChange={(e) => setLanguage(e.target.value as UiLanguage)}>
-              <option value="en">English</option><option value="fr">Français</option><option value="es">Español</option>
-            </select>
-          </label>
           <StoreSelector />
         </header>
         <main className="content">

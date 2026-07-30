@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Health, Settings, Store } from "../api";
-import { languageName, useI18n } from "../components/I18n";
+import { languageName, useI18n, type UiLanguage } from "../components/I18n";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { ErrorNote, Field, Skeleton, Spinner } from "../components/ui";
@@ -53,7 +53,7 @@ const TABS: { id: Tab; label: string }[] = [
 const isTab = (value: string | null): value is Tab => TABS.some((tab) => tab.id === value);
 
 export function SettingsPage() {
-  const { t } = useI18n();
+  const { t, language, setLanguage } = useI18n();
   const { refreshStores: refreshGlobalStores } = useStores();
   const toast = useToast();
   const showStoreLoadError = toast.error;
@@ -484,6 +484,12 @@ export function SettingsPage() {
               />
             )}
           </Field>, 1)}
+        </div>
+        <div className="card">
+          <h2 className="card-title">{t("Admin language")}</h2>
+          <select value={language} onChange={(e) => setLanguage(e.target.value as UiLanguage)}>
+            <option value="en">English</option><option value="fr">Français</option><option value="es">Español</option>
+          </select>
         </div>
         <div className="card">
           <h2 className="card-title">{t("Content languages")}</h2>
