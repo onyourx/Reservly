@@ -30,9 +30,9 @@ seedIfEmpty();
 
 const app = express();
 
-// Shopify webhooks need the raw body for HMAC — mounted before express.json().
-// (They serve the default tenant; per-tenant shops would pass ?t=<slug> in the
-// webhook uri, which tenantMiddleware honors on all other routes.)
+// Shopify webhooks need the raw body for HMAC — mounted before express.json(),
+// so they run ahead of tenantMiddleware. shopifyRouter therefore resolves the
+// tenant itself, from the sending shop's domain header.
 app.use("/webhooks/shopify", shopifyRouter);
 
 app.use(express.json({ limit: "2mb" }));

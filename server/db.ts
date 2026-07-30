@@ -5,7 +5,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.BOOKING_DB || path.join(__dirname, "..", "booking.db");
+const DB_PATH = process.env.BOOKING_DB
+  || path.join(process.env.BOOKING_DATA_DIR || path.join(__dirname, ".."), "booking.db");
 
 // ---------------------------------------------------------------------------
 // Multi-tenancy: one SQLite file per tenant. Request middleware selects the

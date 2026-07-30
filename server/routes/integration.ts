@@ -8,11 +8,11 @@
 // RESERVED until reconciliation.
 import { Router, raw } from "express";
 import crypto from "node:crypto";
-import { db, getSettings, putSettings, pj, auditLog, uid, now, currentTenant } from "../db.js";
+import { db, getSettings, putSettings, pj, auditLog, uid, now, currentTenant, tenantALS } from "../db.js";
 import { navMode } from "../lib/nav.js";
 import { ensureMetafieldDefinitions, getShopifyCustomerEmail } from "../lib/shopifyAdmin.js";
 import { bootstrapOpen, isAuthenticated, login, logout, requireOwner, staffAccess } from "../lib/auth.js";
-import { adminSession } from "../lib/platform.js";
+import { adminSession, listTenants, openTenantDb } from "../lib/platform.js";
 import { getStaffSession, staffTokenOf } from "../lib/staffSessions.js";
 import { collectCustomerData, redactCustomer, sweepRetention } from "../lib/privacy.js";
 import { BookingValidationError, createBooking } from "../lib/bookingService.js";
@@ -25,6 +25,27 @@ import { encryptSecret } from "../lib/crypto.js";
 
 export const settingsRouter = Router();
 export const shopifyRouter = Router(); // mounted at /webhooks/shopify with raw body
+
+/** Webhooks arrive outside any tenant context, so pick the tenant whose
+ *  configured shop matches the sending shop and run the handler inside it.
+ *  Fails closed: an unknown or missing shop is rejected in production. */
+shopifyRouter.use((req, res, next) => {
+  const shop = String(req.headers["x-shopify-shop-domain"] ?? "").trim().toLowerCase();
+  if (shop) {
+    for (const tenant of listTenants()) {
+      const tenantDb = openTenantDb(tenant.slug);
+      if (!tenantDb) continue;
+      const row = tenantDb.prepare("SELECT value FROM settings WHERE key='shopifyShop'").get() as { value: string } | undefined;
+      if (row && String(row.value ?? "").trim().toLowerCase() === shop) {
+        return tenantALS.run({ slug: tenant.slug, db: tenantDb }, next);
+      }
+    }
+  }
+  if (process.env.NODE_ENV === "production") {
+    return res.status(401).json({ error: "unknown shop" });
+  }
+  return next();
+});
 export const proxyRouter = Router();   // mounted at /proxy (Shopify App Proxy)
 
 // --- Settings / health / events ---------------------------------------------
@@ -223,6 +244,12 @@ settingsRouter.post("/notification-jobs/dispatch", requireOwner, async (_req, re
 
 // --- Shopify webhook: orders/create -------------------------------------------
 
+
+/** With no API secret configured there is no way to authenticate a caller, so
+ *  production must reject. Outside production an unconfigured secret still
+ *  passes, so local dev works before Shopify is wired up. */
+const noSecretBypass = (secret: string) => !secret && process.env.NODE_ENV !== "production";
+
 function verifyShopifyHmac(rawBody: Buffer, hmacHeader: string, secret: string): boolean {
   if (!secret || !hmacHeader) return false;
   const digest = crypto.createHmac("sha256", secret).update(rawBody).digest("base64");
@@ -236,7 +263,7 @@ function verifyShopifyHmac(rawBody: Buffer, hmacHeader: string, secret: string):
 shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
   const secret = getSettings().shopifyApiSecret;
   const hmac = String(req.headers["x-shopify-hmac-sha256"] ?? "");
-  if (secret && !verifyShopifyHmac(req.body as Buffer, hmac, secret)) {
+  if (!noSecretBypass(secret) && !verifyShopifyHmac(req.body as Buffer, hmac, secret)) {
     return res.status(401).json({ error: "invalid webhook HMAC" });
   }
   let order: any;
@@ -375,7 +402,7 @@ shopifyRouter.post("/compliance", raw({ type: "*/*" }), (req, res) => {
  *  separators, excluding `signature` itself. */
 function verifyProxySignature(query: Record<string, unknown>, secret: string): boolean {
   const { signature, ...rest } = query as Record<string, string>;
-  if (!secret) return true; // dev mode: no secret configured
+  if (!secret) return noSecretBypass(secret);
   if (!signature) return false;
   const message = Object.keys(rest).sort().map((k) => `${k}=${Array.isArray(rest[k]) ? (rest[k] as unknown as string[]).join(",") : rest[k]}`).join("");
   const digest = crypto.createHmac("sha256", secret).update(message).digest("hex");
