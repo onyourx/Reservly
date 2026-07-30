@@ -2,7 +2,7 @@
 // All endpoints (except login) require a platform super-admin session.
 import { Router } from "express";
 import {
-  platformDb, listTenants, getTenant, createTenant, openTenantDb,
+  platformDb, listTenants, getTenant, createTenant, openTenantDb, validateDomain,
   adminLogin, adminLogout, adminChangePassword, adminSession, setAdminTenant, requireSuperadmin,
   createPasswordReset, consumePasswordReset,
 } from "../lib/platform.js";
@@ -68,16 +68,16 @@ adminRouter.get("/tenants", (_req, res) => {
     } catch {
       /* inactive tenants have no stats */
     }
-    return { id: t.id, slug: t.slug, name: t.name, active: !!t.active, createdAt: t.created_at, stats };
+    return { id: t.id, slug: t.slug, name: t.name, active: !!t.active, createdAt: t.created_at, domain: t.domain, stats };
   });
   res.json({ tenants });
 });
 
 adminRouter.post("/tenants", (req, res) => {
   try {
-    const { slug, name } = req.body ?? {};
-    const t = createTenant(String(slug ?? "").trim(), String(name ?? "").trim());
-    res.json({ tenant: { id: t.id, slug: t.slug, name: t.name, active: true, createdAt: t.created_at } });
+    const { slug, name, domain } = req.body ?? {};
+    const t = createTenant(String(slug ?? "").trim(), String(name ?? "").trim(), String(domain ?? "").trim());
+    res.json({ tenant: { id: t.id, slug: t.slug, name: t.name, active: true, createdAt: t.created_at, domain: t.domain } });
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message ?? err) });
   }
@@ -86,10 +86,24 @@ adminRouter.post("/tenants", (req, res) => {
 adminRouter.put("/tenants/:slug", (req, res) => {
   const t = getTenant(req.params.slug);
   if (!t) return res.status(404).json({ error: "Tenant not found" });
-  const { name, active } = req.body ?? {};
+  const { name, active, domain } = req.body ?? {};
   platformDb.prepare("UPDATE tenants SET name = COALESCE(?, name), active = COALESCE(?, active) WHERE slug = ?")
     .run(name ?? null, active == null ? null : active ? 1 : 0, t.slug);
-  res.json({ tenant: { ...getTenant(t.slug)!, active: !!getTenant(t.slug)!.active } });
+  if (domain !== undefined) {
+    let next: string;
+    try {
+      next = validateDomain(String(domain ?? ""));
+    } catch (err) {
+      return res.status(400).json({ error: String((err as Error).message ?? err) });
+    }
+    try {
+      platformDb.prepare("UPDATE tenants SET domain = ? WHERE slug = ?").run(next, t.slug);
+    } catch {
+      return res.status(400).json({ error: `Domain '${next}' is already used by another tenant` });
+    }
+  }
+  const updated = getTenant(t.slug)!;
+  res.json({ tenant: { ...updated, active: !!updated.active } });
 });
 
 /** Operate the whole Booking Desk as this tenant (session-scoped). */

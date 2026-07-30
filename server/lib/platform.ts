@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS password_resets (
 );
 `);
 
+// Migrate existing databases: add domain column if not present
+const tenantCols = platformDb.prepare("PRAGMA table_info(tenants)").all() as { name: string }[];
+if (!tenantCols.some((c) => c.name === "domain")) {
+  platformDb.exec("ALTER TABLE tenants ADD COLUMN domain TEXT NOT NULL DEFAULT ''");
+}
+platformDb.exec("CREATE UNIQUE INDEX IF NOT EXISTS tenants_domain_unique ON tenants(domain) WHERE domain != ''");
+
 function hashPassword(pw: string): string {
   const salt = crypto.randomBytes(16).toString("hex");
   return salt + ":" + crypto.scryptSync(pw, salt, 32).toString("hex");
@@ -76,10 +83,42 @@ export function seedPlatform() {
 
 const tenantDbs = new Map<string, Database.Database>();
 
-export interface TenantRow { id: string; slug: string; name: string; db_file: string; active: number; created_at: string }
+export interface TenantRow { id: string; slug: string; name: string; db_file: string; active: number; created_at: string; domain: string }
 
 export const listTenants = () => platformDb.prepare("SELECT * FROM tenants ORDER BY created_at").all() as TenantRow[];
 export const getTenant = (slug: string) => platformDb.prepare("SELECT * FROM tenants WHERE slug = ?").get(slug) as TenantRow | undefined;
+
+/** Bare lowercase hostname: no port, no trailing dot. */
+export const normalizeHost = (value: string) =>
+  String(value ?? "").trim().toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
+
+/** Normalised bare hostname, or "" to clear. Throws on anything else. */
+export function validateDomain(value: string): string {
+  const host = normalizeHost(value);
+  if (host && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) {
+    throw new Error("Domain must be a bare hostname, e.g. bookings.example.com");
+  }
+  return host;
+}
+
+export const tenantByDomain = (host: string) =>
+  host ? platformDb.prepare("SELECT * FROM tenants WHERE domain = ?").get(host) as TenantRow | undefined : undefined;
+
+/** Host routing only starts enforcing once at least one tenant has a domain,
+ *  so single-host deployments keep working unchanged. */
+const domainRoutingActive = () =>
+  Boolean(platformDb.prepare("SELECT 1 FROM tenants WHERE domain != '' LIMIT 1").get());
+
+/** Hosts that serve the platform itself rather than one tenant: the
+ *  PUBLIC_URL host and loopback (dev, health checks, server-side calls). */
+const isPlatformHost = (host: string) => {
+  if (!host || host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
+  try {
+    return Boolean(process.env.PUBLIC_URL) && normalizeHost(new URL(process.env.PUBLIC_URL as string).host) === host;
+  } catch {
+    return false;
+  }
+};
 
 export function openTenantDb(slug: string): Database.Database | null {
   const t = getTenant(slug);
@@ -95,11 +134,11 @@ export function openTenantDb(slug: string): Database.Database | null {
   return d;
 }
 
-export function createTenant(slug: string, name: string): TenantRow {
+export function createTenant(slug: string, name: string, domain = ""): TenantRow {
   if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(slug)) throw new Error("Slug must be lowercase letters/digits/dashes");
   if (getTenant(slug)) throw new Error(`Tenant '${slug}' already exists`);
-  platformDb.prepare("INSERT INTO tenants (id, slug, name, db_file, active, created_at) VALUES (?, ?, ?, ?, 1, ?)")
-    .run(uid(), slug, name || slug, `booking-${slug}.db`, now());
+  platformDb.prepare("INSERT INTO tenants (id, slug, name, db_file, active, created_at, domain) VALUES (?, ?, ?, ?, 1, ?, ?)")
+    .run(uid(), slug, name || slug, `booking-${slug}.db`, now(), validateDomain(domain));
   openTenantDb(slug); // create the file + schema right away
   return getTenant(slug)!;
 }
@@ -243,6 +282,19 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
     const d = openTenantDb(adminTenant);
     if (!d) return res.status(404).json({ error: `Unknown or inactive tenant '${adminTenant}'` });
     return tenantALS.run({ slug: adminTenant, db: d }, next);
+  }
+
+  const host = normalizeHost(String(req.headers.host ?? ""));
+  const byDomain = tenantByDomain(host);
+  if (byDomain && byDomain.active) {
+    const d = openTenantDb(byDomain.slug);
+    if (!d) return res.status(404).json({ error: `Unknown or inactive tenant '${byDomain.slug}'` });
+    return tenantALS.run({ slug: byDomain.slug, db: d }, next);
+  }
+  // Fail closed: once any tenant owns a domain, an unrecognised host must not
+  // silently fall through to the default tenant.
+  if (domainRoutingActive() && host && !isPlatformHost(host)) {
+    return res.status(404).json({ error: "Unknown host" });
   }
 
   const staffSession = getStaffSession(staffTokenOf(req));

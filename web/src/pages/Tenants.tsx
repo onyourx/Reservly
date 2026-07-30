@@ -10,6 +10,7 @@ interface TenantRow {
   name: string;
   active: boolean;
   createdAt: string;
+  domain: string;
   stats: { bookings: number; revenue: number; products: number; upcoming: number };
 }
 
@@ -31,6 +32,7 @@ export function TenantsPage() {
   // create form
   const [newSlug, setNewSlug] = useState("");
   const [newName, setNewName] = useState("");
+  const [newDomain, setNewDomain] = useState("");
   const [creating, setCreating] = useState(false);
 
   // password change
@@ -74,10 +76,11 @@ export function TenantsPage() {
   const create = async () => {
     setCreating(true);
     try {
-      await api("/api/admin/tenants", { body: { slug: newSlug.trim().toLowerCase(), name: newName.trim() } });
+      await api("/api/admin/tenants", { body: { slug: newSlug.trim().toLowerCase(), name: newName.trim(), domain: newDomain.trim() } });
       toast.success(`Tenant '${newSlug}' created`);
       setNewSlug("");
       setNewName("");
+      setNewDomain("");
       loadTenants();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Create failed");
@@ -86,7 +89,7 @@ export function TenantsPage() {
     }
   };
 
-  const update = async (slug: string, patch: { name?: string; active?: boolean }) => {
+  const update = async (slug: string, patch: { name?: string; active?: boolean; domain?: string }) => {
     try {
       await api(`/api/admin/tenants/${slug}`, { method: "PUT", body: patch });
       loadTenants();
@@ -168,7 +171,7 @@ export function TenantsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Tenant</th><th>Slug</th><th className="num">Bookings</th><th className="num">Revenue</th>
+                  <th>Tenant</th><th>Slug</th><th>Domain</th><th className="num">Bookings</th><th className="num">Revenue</th>
                   <th className="num">Products</th><th className="num">Upcoming</th><th>Status</th><th></th>
                 </tr>
               </thead>
@@ -187,6 +190,16 @@ export function TenantsPage() {
                       />
                     </td>
                     <td className="mono">{t.slug}</td>
+                    <td>
+                      <input
+                        type="text"
+                        defaultValue={t.domain}
+                        placeholder="none"
+                        style={{ border: "1px solid transparent", background: "transparent", width: 200 }}
+                        onBlur={(e) => { if (e.target.value.trim() !== t.domain) void update(t.slug, { domain: e.target.value.trim() }); }}
+                        title="Custom hostname for this tenant, e.g. bookings.example.com"
+                      />
+                    </td>
                     <td className="num">{t.stats.bookings}</td>
                     <td className="num">{money(t.stats.revenue)}</td>
                     <td className="num">{t.stats.products}</td>
@@ -217,6 +230,9 @@ export function TenantsPage() {
           </Field>
           <Field label="Name">
             <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Acme Outdoors" />
+          </Field>
+          <Field label="Domain (optional)">
+            <input type="text" value={newDomain} onChange={(e) => setNewDomain(e.target.value)} placeholder="bookings.example.com" />
           </Field>
           <button type="button" className="btn btn-primary" disabled={creating || !newSlug} onClick={() => void create()}>
             {creating && <Spinner small />} Create tenant
