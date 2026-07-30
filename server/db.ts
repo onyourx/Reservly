@@ -575,7 +575,6 @@ const SETTING_DEFAULTS: Record<string, string> = {
   // after a rental closes; whole bookings are anonymized after the long period.
   idRetentionDays: "30",
   dataRetentionDays: "730",
-  adminPasswordHash: "",
   publicUrl: process.env.PUBLIC_URL || "", // base for customer-facing links (e-signature)
   contractTemplate: "",                    // custom contract HTML with {{placeholders}}; empty = built-in
   enabledLanguages: '["en","fr"]',         // tenant catalog/customer-content languages

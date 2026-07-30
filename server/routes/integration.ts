@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import { db, getSettings, putSettings, pj, auditLog, uid, now, currentTenant } from "../db.js";
 import { navMode } from "../lib/nav.js";
 import { ensureMetafieldDefinitions, getShopifyCustomerEmail } from "../lib/shopifyAdmin.js";
-import { authRequired, isAuthenticated, login, logout, requireOwner, setAdminPassword, staffAccess } from "../lib/auth.js";
+import { bootstrapOpen, isAuthenticated, login, logout, requireOwner, staffAccess } from "../lib/auth.js";
 import { adminSession } from "../lib/platform.js";
 import { getStaffSession, staffTokenOf } from "../lib/staffSessions.js";
 import { collectCustomerData, redactCustomer, sweepRetention } from "../lib/privacy.js";
@@ -37,14 +37,14 @@ settingsRouter.get("/health", (_req, res) => {
     navMode: navMode(),
     shopifyConfigured: Boolean(getSettings().shopifyApiSecret),
     sftpConfigured: sftpConfigured(),
-    authRequired: authRequired(),
+    authRequired: !bootstrapOpen(),
   });
 });
 
 // --- Staff auth (open endpoints; everything else behind requireAuth) ----------
 
 settingsRouter.get("/auth", (req, res) => {
-  const required = authRequired();
+  const required = !bootstrapOpen();
   const authenticated = isAuthenticated(req);
 
   let role: "superadmin" | "staff" | null = null;
@@ -90,7 +90,7 @@ settingsRouter.get("/settings", (_req, res) => {
 
 settingsRouter.put("/settings", requireOwner, (req, res) => {
   const {
-    adminPassword, sftpPassword, googleClientSecret, msClientSecret,
+    sftpPassword, googleClientSecret, msClientSecret,
     sftpPasswordEnc: _ignoredSftpPasswordEnc,
     googleClientSecretEnc: _ignoredGoogleClientSecretEnc,
     msClientSecretEnc: _ignoredMsClientSecretEnc,
@@ -106,11 +106,6 @@ settingsRouter.put("/settings", requireOwner, (req, res) => {
       }
       rest.currency = normalized;
     }
-  }
-  try {
-    if (adminPassword) setAdminPassword(String(adminPassword));
-  } catch (err) {
-    return res.status(400).json({ error: String((err as Error).message ?? err) });
   }
   for (const key of ["contractTemplate", "reminderPickupTemplate", "reminderReturnTemplate"]) {
     if (typeof rest[key] !== "string") continue;

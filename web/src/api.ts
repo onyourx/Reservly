@@ -513,7 +513,6 @@ export interface Settings {
   navPassword?: string;
   shopifyApiSecret?: string;
   zoomClientSecret?: string;
-  adminPassword?: string;
   sftpPassword?: string;
   googleClientSecret?: string;
   msClientSecret?: string;
