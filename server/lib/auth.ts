@@ -4,7 +4,7 @@
 // When none is set (fresh dev install) the app stays open and Health shows it.
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
-import { db, getSettings, auditLog, currentTenant } from "../db.js";
+import { db, auditLog, currentTenant } from "../db.js";
 import {
   adminSession,
   getTenant,
@@ -20,7 +20,6 @@ import {
   deleteStaffSession,
   STAFF_COOKIE,
   SESSION_TTL_MS,
-  clearStaffSessionsForTenant,
   ALL_PERMS,
   PERM_KEYS,
 } from "./staffSessions.js";
@@ -35,7 +34,6 @@ export type Access = {
   username: string | null;
 };
 
-const MIN_PASSWORD_LENGTH = 12;
 
 type StaffUserRow = {
   id: string;
@@ -81,25 +79,19 @@ export function verifyPassword(pw: string, stored: string): boolean {
   }
 }
 
-export function setAdminPassword(pw: string) {
-  if (typeof pw !== "string" || pw.length < MIN_PASSWORD_LENGTH) {
-    throw new Error(`Admin password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-  }
-  db.prepare(
-    "INSERT INTO settings (key, value) VALUES ('adminPasswordHash', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-  ).run(hashPassword(pw));
-  clearStaffSessionsForTenant(currentTenant().slug); // force re-login everywhere on rotation
-  auditLog("password.changed");
-}
-
 export const authRequired = () => Boolean(
-  getSettings().adminPasswordHash
-  || db.prepare("SELECT 1 FROM staff_users WHERE active=1 LIMIT 1").get(),
+  db.prepare("SELECT 1 FROM staff_users WHERE active=1 LIMIT 1").get(),
 );
+
+/** First-run open mode: every request gets owner access until the first staff
+ *  user exists. Dev/test convenience only — never active in production, where
+ *  first-run setup is done by the platform super-admin, whose session passes
+ *  every tenant gate. */
+export const bootstrapOpen = () => !authRequired() && process.env.NODE_ENV !== "production";
 
 export function isAuthenticated(req: Request): boolean {
   if (adminSession(req)) return true; // platform super admin passes every tenant gate
-  if (!authRequired()) return true;
+  if (bootstrapOpen()) return true;
   const session = getStaffSession(staffTokenOf(req));
   return Boolean(
     session
@@ -123,7 +115,7 @@ export function staffAccess(req: Request): Access | null {
       username: session.username,
     };
   }
-  if (!authRequired()) {
+  if (bootstrapOpen()) {
     return { role: "legacy", perms: ALL_PERMS, storeIds: "*", userId: null, username: null };
   }
   return null;
@@ -224,23 +216,6 @@ export function login(req: Request, res: Response) {
     }
   }
 
-  // Path D: tenant staff login (either username non-empty + staff path, or username empty for legacy)
-  const tenantSlug = username ? username : currentTenant().slug;
-  const tenant = getTenant(tenantSlug);
-
-  if (tenant && tenant.active) {
-    const tenantDb = openTenantDb(tenantSlug);
-    if (tenantDb) {
-      const hash = tenantDb.prepare("SELECT value FROM settings WHERE key='adminPasswordHash'").get() as { value: string } | undefined;
-      if (hash && verifyPassword(pw, hash.value)) {
-        const token = createStaffSession(tenantSlug);
-        res.setHeader("Set-Cookie", `${STAFF_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL_MS / 1000}`);
-        auditLog("login", "", req.ip ?? "", tenantSlug);
-        return res.json({ ok: true, role: "staff", tenant: tenantSlug });
-      }
-    }
-  }
-
   // Authentication failed: do not reveal whether username exists
   if (username) {
     auditLog("login_failed", "", req.ip ?? "", username);
@@ -248,13 +223,13 @@ export function login(req: Request, res: Response) {
   }
 
   // Legacy behavior when username empty and auth not required
-  if (!authRequired()) {
+  if (bootstrapOpen()) {
     return res.json({ ok: true, required: false });
   }
 
-  // Legacy: username empty, auth required, password mismatch
+  // Username empty and auth required: authentication failed
   auditLog("login_failed", "", req.ip ?? "", "");
-  return res.status(401).json({ error: "Invalid password" });
+  return res.status(401).json({ error: "Invalid username or password" });
 }
 
 export function logout(req: Request, res: Response) {

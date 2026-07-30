@@ -28,7 +28,7 @@ const EMPTY = {
   sftpHost: "", sftpPort: "22", sftpUser: "", sftpPassword: "", sftpPath: "/reservly-ids",
   googleClientId: "", googleClientSecret: "", msClientId: "", msTenantId: "common", msClientSecret: "",
   calendarSyncEnabled: "", calendarPublicUrl: "",
-  zoomClientSecret: "", navPassword: "", shopifyApiSecret: "", adminPassword: "",
+  zoomClientSecret: "", navPassword: "", shopifyApiSecret: "",
 };
 type GeneralSettings = typeof EMPTY;
 
@@ -41,7 +41,7 @@ const generalSettings = (loaded: Partial<Settings>): GeneralSettings => {
   return result;
 };
 
-const WRITE_ONLY: (keyof GeneralSettings)[] = ["navPassword", "shopifyApiSecret", "adminPassword", "zoomClientSecret", "sftpPassword", "googleClientSecret", "msClientSecret"];
+const WRITE_ONLY: (keyof GeneralSettings)[] = ["navPassword", "shopifyApiSecret", "zoomClientSecret", "sftpPassword", "googleClientSecret", "msClientSecret"];
 const TABS: { id: Tab; label: string }[] = [
   { id: "store", label: "Stores" },
   { id: "access", label: "Access & privacy" },
