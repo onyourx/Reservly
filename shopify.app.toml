@@ -34,4 +34,6 @@ subpath = "booking"
 prefix = "apps"
 
 [build]
-automatically_update_urls_on_dev = true
+# Off deliberately: `shopify app dev` would otherwise repoint the live app at its
+# throwaway tunnel, which silently breaks the production app URL for the store.
+automatically_update_urls_on_dev = false
