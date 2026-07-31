@@ -12,7 +12,8 @@ if (!pw || pw.length < 8) {
   process.exit(1);
 }
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(dir, "..", "platform.db"));
+const dataDir = process.env.BOOKING_DATA_DIR || path.join(dir, "..");
+const db = new Database(path.join(dataDir, "platform.db"));
 const salt = crypto.randomBytes(16).toString("hex");
 const hash = salt + ":" + crypto.scryptSync(pw, salt, 32).toString("hex");
 const info = db.prepare("UPDATE platform_users SET password_hash = ? WHERE role = 'superadmin'").run(hash);

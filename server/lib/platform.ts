@@ -98,6 +98,13 @@ export function validateDomain(value: string): string {
   if (host && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host)) {
     throw new Error("Domain must be a bare hostname, e.g. bookings.example.com");
   }
+  // Assigning a domain turns on fail-closed host routing. Without a resolvable
+  // PUBLIC_URL the platform host cannot be recognised, so this would 404 the
+  // whole deployment. Refuse rather than warn — by the time a warning printed,
+  // the outage would already have happened.
+  if (host && !platformHostFromEnv()) {
+    throw new Error("Set PUBLIC_URL to a valid absolute URL before assigning tenant domains");
+  }
   return host;
 }
 
@@ -109,15 +116,23 @@ export const tenantByDomain = (host: string) =>
 const domainRoutingActive = () =>
   Boolean(platformDb.prepare("SELECT 1 FROM tenants WHERE domain != '' LIMIT 1").get());
 
+/** Host of PUBLIC_URL, or "" when it is unset or unparseable. */
+const platformHostFromEnv = () => {
+  const raw = process.env.PUBLIC_URL;
+  if (!raw) return "";
+  try {
+    return normalizeHost(new URL(raw).host);
+  } catch {
+    return "";
+  }
+};
+
 /** Hosts that serve the platform itself rather than one tenant: the
  *  PUBLIC_URL host and loopback (dev, health checks, server-side calls). */
 const isPlatformHost = (host: string) => {
   if (!host || host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") return true;
-  try {
-    return Boolean(process.env.PUBLIC_URL) && normalizeHost(new URL(process.env.PUBLIC_URL as string).host) === host;
-  } catch {
-    return false;
-  }
+  const configured = platformHostFromEnv();
+  return Boolean(configured) && configured === host;
 };
 
 export function openTenantDb(slug: string): Database.Database | null {
@@ -293,7 +308,11 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
   }
   // Fail closed: once any tenant owns a domain, an unrecognised host must not
   // silently fall through to the default tenant.
-  if (domainRoutingActive() && host && !isPlatformHost(host)) {
+  // /api/admin and /api/health read platformDb, not a tenant DB, so they must stay
+  // reachable on any host — otherwise a wrong PUBLIC_URL locks the operator out of
+  // the only API that can clear the domain causing the lockout.
+  const platformScoped = /^\/api\/(admin|health)(\/|$)/.test(req.path);
+  if (domainRoutingActive() && host && !isPlatformHost(host) && !platformScoped) {
     return res.status(404).json({ error: "Unknown host" });
   }
 
@@ -305,11 +324,21 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
     // staff session references unknown/inactive tenant: fall through to default
   }
 
-  const fromHeader = String(req.headers["x-tenant"] ?? "") || String(req.query.t ?? "");
-  if (fromHeader) {
-    const d = openTenantDb(fromHeader);
-    if (!d) return res.status(404).json({ error: `Unknown or inactive tenant '${fromHeader}'` });
-    return tenantALS.run({ slug: fromHeader, db: d }, next);
+  /** The ?t= / x-tenant hint is unauthenticated, so it may only pick a tenant on
+   *  routes that carry their own per-request credential: the Shopify app proxy
+   *  (HMAC-signed) and the customer links under /sign and /manage (unguessable
+   *  token). Anywhere else — /discover and /api especially — an anonymous caller
+   *  must not be able to switch tenants. */
+  const hintable = /^\/(proxy|sign|manage)(\/|$)/.test(req.path);
+  const fromHint = hintable
+    ? (String(req.headers["x-tenant"] ?? "") || String(req.query.t ?? ""))
+    : "";
+  if (fromHint) {
+    const d = openTenantDb(fromHint);
+    // An unknown or inactive hint must not answer differently from a valid one:
+    // the difference alone enumerates tenant slugs. Fall through to the default
+    // tenant instead, where the token simply will not be found.
+    if (d) return tenantALS.run({ slug: fromHint, db: d }, next);
   }
 
   return tenantALS.run({ slug: DEFAULT_TENANT_SLUG, db: openTenantDb(DEFAULT_TENANT_SLUG)! }, next);
