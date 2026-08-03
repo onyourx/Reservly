@@ -38,10 +38,15 @@ are the boot defaults and are handy for the first run / infra-as-code.
 | `BOOKING_TZ` | Store timezone for "today" (default `America/Toronto`) |
 | `PUBLIC_URL` | Base URL for customer-facing links (e-signature), e.g. `https://bookings.gosselin.ca` |
 | `NAV_BASE_URL` / `NAV_USERNAME` / `NAV_PASSWORD` / `NAV_DOMAIN` | LS Central NTLM connection. Set `NAV_BASE_URL` to switch NAV out of mock mode. |
-| `SHOPIFY_SHOP` | `your-store.myshopify.com` |
 | `SHOPIFY_API_SECRET` | App client secret — verifies webhook HMAC + app-proxy signatures |
 | `SHOPIFY_CLIENT_ID` | App client id (else read from `shopify.app.toml`) |
 | `CONDUIT_URL` | Conduit base URL for event fan-out → HubSpot emails |
+
+> **Shop domain is per tenant, not an env var.** Set each tenant's
+> `.myshopify.com` domain in Settings → Shopify. It deliberately has no
+> environment default: the app-proxy signature is bound to it to keep one shop's
+> storefront out of another tenant's data, and a global default would make every
+> unconfigured tenant claim the same shop and defeat that check.
 
 ## 3. Shopify wiring (per production host)
 

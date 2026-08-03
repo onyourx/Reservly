@@ -410,7 +410,11 @@ function verifyProxySignature(query: Record<string, unknown>, secret: string): b
   const { signature, ...rest } = query as Record<string, string>;
   if (!secret) return noSecretBypass(secret);
   if (!signature) return false;
-  const message = Object.keys(rest).sort().map((k) => `${k}=${Array.isArray(rest[k]) ? (rest[k] as unknown as string[]).join(",") : rest[k]}`).join("");
+  const flatten = (v: unknown): string => {
+    const one = (x: unknown): string => (x !== null && typeof x === "object") ? "" : String(x ?? "");
+    return Array.isArray(v) ? v.map(one).join(",") : one(v);
+  };
+  const message = Object.keys(rest).sort().map((k) => `${k}=${flatten(rest[k])}`).join("");
   const digest = crypto.createHmac("sha256", secret).update(message).digest("hex");
   try {
     return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
@@ -419,8 +423,43 @@ function verifyProxySignature(query: Record<string, unknown>, secret: string): b
   }
 }
 
+/** Shopify always sends the bare myshopify domain; operators often paste a URL. */
+const normalizeShopDomain = (value: unknown) =>
+  String(value ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "").replace(/\.$/, "");
+
+/** Attacker-influenced values reach these logs. Strip every control and
+ *  line-separator character (U+2028/U+2029 and NEL included), bound the
+ *  length, and quote via JSON so embedded quotes cannot forge extra fields. */
+const logSafe = (value: string) => JSON.stringify(value.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, " ").slice(0, 80));
+
 proxyRouter.use((req, res, next) => {
-  if (!verifyProxySignature(req.query as Record<string, unknown>, getSettings().shopifyApiSecret)) {
+  const secret = getSettings().shopifyApiSecret;
+  if (!verifyProxySignature(req.query as Record<string, unknown>, secret)) {
+    return res.status(401).json({ error: "invalid proxy signature" });
+  }
+  // Bind the signature to this tenant. The secret can be shared across tenants
+  // (it defaults from SHOPIFY_API_SECRET) and `t` sits inside the signed params,
+  // so a valid signature alone would let one shop's storefront read and write
+  // another tenant's data. Read the tenant's OWN row rather than the merged
+  // settings: shopifyShop deliberately has no env default (see server/db.ts), and
+  // this keeps the binding correct even if one were ever reintroduced.
+  const row = db.prepare("SELECT value FROM settings WHERE key='shopifyShop'").get() as { value: string } | undefined;
+  const tenantShop = normalizeShopDomain(row?.value);
+  const rawShop = req.query.shop;
+  if (rawShop !== undefined && typeof rawShop !== "string") {
+    console.warn(`[shopify] proxy rejected: non-string shop parameter for tenant '${currentTenant().slug}'`);
+    return res.status(401).json({ error: "invalid proxy signature" });
+  }
+  const signedShop = normalizeShopDomain(rawShop);
+  if (!tenantShop) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn(`[shopify] proxy rejected: tenant '${currentTenant().slug}' has no shopifyShop configured (signed shop ${logSafe(signedShop)})`);
+      return res.status(401).json({ error: "invalid proxy signature" });
+    }
+    return next();
+  }
+  if (signedShop !== tenantShop) {
+    console.warn(`[shopify] proxy rejected: shop does not match tenant '${currentTenant().slug}' (signed shop ${logSafe(signedShop)}, tenant shop ${logSafe(tenantShop)})`);
     return res.status(401).json({ error: "invalid proxy signature" });
   }
   next();

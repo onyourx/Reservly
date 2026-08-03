@@ -289,6 +289,11 @@ export function requireSuperadmin(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+/** Query/header values can be objects or arrays (qs, repeated headers); a hint
+ *  that is not a plain string is not a slug, so ignore it rather than coercing
+ *  — String() throws on some qs-built objects. */
+const stringHint = (value: unknown) => (typeof value === "string" ? value : "");
+
 /** Request middleware: pick the tenant DB for this request. */
 export function tenantMiddleware(req: Request, res: Response, next: NextFunction) {
   const adminTenant = adminSession(req)?.tenantSlug;
@@ -331,7 +336,8 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
    *  must not be able to switch tenants. */
   const hintable = /^\/(proxy|sign|manage)(\/|$)/.test(req.path);
   const fromHint = hintable
-    ? (String(req.headers["x-tenant"] ?? "") || String(req.query.t ?? ""))
+    ? (stringHint(req.headers["x-tenant"])
+      || stringHint(req.query.t))
     : "";
   if (fromHint) {
     const d = openTenantDb(fromHint);

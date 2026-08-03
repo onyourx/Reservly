@@ -565,7 +565,10 @@ const SETTING_DEFAULTS: Record<string, string> = {
   navUsername: process.env.NAV_USERNAME || "",
   navPassword: process.env.NAV_PASSWORD || "",
   navDomain: process.env.NAV_DOMAIN || "",
-  shopifyShop: process.env.SHOPIFY_SHOP || "",
+  // No env default: this identifies WHICH store a tenant is, so a global value
+  // would make every unconfigured tenant claim the same shop — which defeats the
+  // app-proxy tenant binding in server/routes/integration.ts. Set it per tenant.
+  shopifyShop: "",
   shopifyApiSecret: process.env.SHOPIFY_API_SECRET || "",
   shopifyClientId: process.env.SHOPIFY_CLIENT_ID || "",
   conduitUrl: process.env.CONDUIT_URL || "",

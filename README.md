@@ -60,7 +60,8 @@ Point it at real NAV in **Settings** (base URL + NTLM credentials) or via env
 (`NAV_BASE_URL`, `NAV_USERNAME`, `NAV_PASSWORD`, `NAV_DOMAIN`).
 
 Other env: `PORT`, `BOOKING_DB`, `BOOKING_ENC_KEY` (64-hex AES key for ID capture),
-`SHOPIFY_API_SECRET` (webhook + proxy signatures), `SHOPIFY_SHOP`, `CONDUIT_URL`.
+`SHOPIFY_API_SECRET` (webhook + proxy signatures), `CONDUIT_URL`. The shop domain
+is per tenant — set it in Settings → Shopify, not the environment.
 
 ## One transaction for products + bookings
 
