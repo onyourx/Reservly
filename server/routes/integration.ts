@@ -390,8 +390,14 @@ shopifyRouter.post("/compliance", raw({ type: "*/*" }), (req, res) => {
     // and delivers it to the merchant/customer.
     auditLog("privacy.data_request", email, `shopify order ids: ${JSON.stringify(payload?.orders_requested ?? [])}`, "shopify");
   } else if (topic === "shop/redact") {
-    putSettings({ shopifyShop: "", shopifyApiSecret: "" });
-    auditLog("privacy.shop_redact", String(payload?.shop_domain ?? ""), "", "shopify");
+    // Shopify sends this ~48h after an uninstall. Deliberately non-destructive:
+    // shopifyApiSecret is this app's own credential, not the shop's data, and
+    // clearing it breaks every signature check and any later reconnection.
+    // Booking records belong to the merchant — erasing them is an explicit
+    // operator action (privacy export/redact + retention sweeps), never a
+    // side effect of uninstalling. We acknowledge, log, and retain.
+    console.warn(`[shopify] shop/redact received for ${String(payload?.shop_domain ?? "unknown shop")} — data retained; run an explicit privacy redaction if erasure is required`);
+    auditLog("privacy.shop_redact", String(payload?.shop_domain ?? ""), "acknowledged; settings and booking data retained", "shopify");
   }
   res.status(200).json({ ok: true });
 });
