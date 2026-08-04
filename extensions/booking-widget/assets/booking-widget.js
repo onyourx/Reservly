@@ -503,7 +503,7 @@
       Object.keys(availability).filter(function (date) {
         return date >= selected.start && (!selected.end || date <= selected.end);
       }).sort().forEach(function (date) {
-        var text = availability[date] + " available on " + readableDate(date);
+        var text = readableDate(date);
         if (!selected.end && availability[date] > 0) {
           var choice = el("button", "gsl-return-choice", text);
           choice.type = "button";
@@ -516,7 +516,7 @@
           });
           list.appendChild(choice);
         } else {
-          list.appendChild(el("p", "", text));
+          list.appendChild(el("p", "", availability[date] === 0 ? text + " — unavailable" : text));
         }
       });
       panel.appendChild(list);

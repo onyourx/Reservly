@@ -295,6 +295,8 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
       price: String(p.default_unit_price),
       sku: p.retail_item || p.product_no,
       optionValues: [{ optionName: "Title", name: "Default Title" }],
+      inventoryPolicy: "CONTINUE",
+      inventoryItem: { tracked: false },
     }],
     metafields,
   };
