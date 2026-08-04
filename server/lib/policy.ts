@@ -10,6 +10,10 @@ function settingNumber(value: string | undefined, fallback: number) {
 const bookingTimeZone = process.env.BOOKING_TZ || "America/Toronto";
 
 function localTime(iso: string): string {
+  // A timezone-less string is already shop wall-clock time; Date-parsing it
+  // would reinterpret it in the host timezone.
+  const naive = /^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2})/.exec(iso);
+  if (naive && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso)) return naive[1];
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: bookingTimeZone,
     hour: "2-digit",

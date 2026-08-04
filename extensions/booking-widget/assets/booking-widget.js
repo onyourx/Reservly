@@ -43,6 +43,7 @@
     var shopifyCrossSell = [];
     var stores = [];
     var sessions = [];
+    var policy = { pickupEarliestTime: "", returnByTime: "" };
     var availability = {};
     var quote = null;
     var quoteRequest = 0;
@@ -255,6 +256,7 @@
         request("/stores").then(function (data) {
           stores = data.stores || [];
           if (!selected.storeId && stores.length) selected.storeId = String(stores[0].id);
+          policy = data.policy || policy;
           renderWhen();
           if (type === "RENTAL") loadMonthAvailability();
           else if (selected.date) loadServiceSlots();
@@ -419,11 +421,26 @@
       var times = el("div", "gsl-times");
       var from = el("select");
       var to = el("select");
+      var baseOptions = [];
       for (var hour = 9; hour <= 18; hour++) {
-        var value = pad(hour) + ":00";
-        from.appendChild(new Option(readableTime(value), value));
-        to.appendChild(new Option(readableTime(value), value));
+        baseOptions.push(pad(hour) + ":00");
       }
+      var fromOptions = policy.pickupEarliestTime ? baseOptions.filter(function (value) {
+        return value >= policy.pickupEarliestTime;
+      }) : baseOptions;
+      if (!fromOptions.length) fromOptions = baseOptions;
+      var toOptions = policy.returnByTime ? baseOptions.filter(function (value) {
+        return value <= policy.returnByTime;
+      }) : baseOptions;
+      if (!toOptions.length) toOptions = baseOptions;
+      fromOptions.forEach(function (value) {
+        from.appendChild(new Option(readableTime(value), value));
+      });
+      toOptions.forEach(function (value) {
+        to.appendChild(new Option(readableTime(value), value));
+      });
+      if (fromOptions.indexOf(selected.timeFrom) === -1) selected.timeFrom = fromOptions[0];
+      if (toOptions.indexOf(selected.timeTo) === -1) selected.timeTo = toOptions[toOptions.length - 1];
       from.value = selected.timeFrom;
       to.value = selected.timeTo;
       from.addEventListener("change", function () {

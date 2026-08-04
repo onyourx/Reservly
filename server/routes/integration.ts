@@ -22,6 +22,7 @@ import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhoto
 import { sendClassTicketEmail } from "../lib/ticketEmail.js";
 import { getAllEmittedEvents, PRESETS } from "../lib/webhookPresets.js";
 import { encryptSecret } from "../lib/crypto.js";
+import { validateRentalWindow } from "../lib/policy.js";
 
 export const settingsRouter = Router();
 export const shopifyRouter = Router(); // mounted at /webhooks/shopify with raw body
@@ -714,6 +715,10 @@ proxyRouter.get("/quote", (req, res) => {
   try {
     const { type = "RENTAL", productNo, storeId, from, to, sessionId, qty } = req.query as Record<string, string>;
     if (!["RENTAL", "COURSE", "SERVICE"].includes(type)) return res.status(400).json({ error: "Invalid booking type" });
+    if (type === "RENTAL" && from && to && from.includes("T") && to.includes("T")) {
+      const validation = validateRentalWindow(from, to);
+      if (!validation.ok) return res.status(400).json({ error: validation.error });
+    }
     const q = quoteLines([{
       type: type as "RENTAL" | "COURSE" | "SERVICE",
       productNo, storeId, from, to, sessionId, qty: Number(qty) || 1,
@@ -725,7 +730,14 @@ proxyRouter.get("/quote", (req, res) => {
 });
 
 proxyRouter.get("/stores", (_req, res) => {
-  res.json({ stores: db.prepare("SELECT id, code, name, city FROM stores ORDER BY name").all() });
+  const settings = getSettings();
+  res.json({
+    stores: db.prepare("SELECT id, code, name, city FROM stores ORDER BY name").all(),
+    policy: {
+      pickupEarliestTime: settings.pickupEarliestTime || "",
+      returnByTime: settings.returnByTime || "",
+    },
+  });
 });
 
 proxyRouter.get("/search", async (req, res) => {
