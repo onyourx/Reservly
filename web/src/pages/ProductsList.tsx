@@ -131,7 +131,7 @@ export function ProductsList({ typeFilter = "RENTAL" }: { typeFilter?: ProductTy
             disabled={syncing}
             onClick={() => void sync()}
           >
-            {syncing && <Spinner small />} {t("Sync from NAV")}
+            {syncing && <Spinner small />} {t("Sync from ERP")}
           </button>
         </div>
       </div>
@@ -165,7 +165,7 @@ export function ProductsList({ typeFilter = "RENTAL" }: { typeFilter?: ProductTy
         <div className="card">
           <EmptyState
             title={`No ${typeFilter === "RENTAL" ? "rental" : typeFilter === "COURSE" ? "course" : "service"} products`}
-            hint='Use "Sync from NAV" to pull the catalogue.'
+            hint='Use "Sync from ERP" to pull the catalogue.'
           />
         </div>
       ) : (
