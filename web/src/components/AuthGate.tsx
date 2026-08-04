@@ -124,7 +124,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               <div className="logo" style={{ marginBottom: 16 }}>
                 <LogoMark size={40} />
                 <span className="logo-text">
-                  Reservly
+                  Bagsy
                   <small>Booking Desk</small>
                 </span>
               </div>
@@ -157,7 +157,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               <div className="logo" style={{ marginBottom: 16 }}>
                 <LogoMark size={40} />
                 <span className="logo-text">
-                  Reservly
+                  Bagsy
                   <small>Booking Desk</small>
                 </span>
               </div>
@@ -247,7 +247,7 @@ function ResetPassword() {
           <div className="logo" style={{ marginBottom: 16 }}>
             <LogoMark size={40} />
             <span className="logo-text">
-              Reservly
+              Bagsy
               <small>Booking Desk</small>
             </span>
           </div>
@@ -292,7 +292,7 @@ function ResetPassword() {
           <div className="logo" style={{ marginBottom: 16 }}>
             <LogoMark size={40} />
             <span className="logo-text">
-              Reservly
+              Bagsy
               <small>Booking Desk</small>
             </span>
           </div>
@@ -313,7 +313,7 @@ function ResetPassword() {
         <div className="logo" style={{ marginBottom: 16 }}>
           <LogoMark size={40} />
           <span className="logo-text">
-            Reservly
+            Bagsy
             <small>Booking Desk</small>
           </span>
         </div>

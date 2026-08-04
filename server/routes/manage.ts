@@ -41,13 +41,13 @@ manageRouter.get("/:token/calendar.ics", (req, res) => {
   if (!row) return res.status(404).send("Calendar link expired");
   const booking = serializeBooking(row.id)!;
   const events = booking.lines.map((line: any) => [
-    "BEGIN:VEVENT", `UID:${line.id}@reservly`, `DTSTAMP:${icsDate(booking.createdAt)}`,
+    "BEGIN:VEVENT", `UID:${line.id}@bagsy`, `DTSTAMP:${icsDate(booking.createdAt)}`,
     `DTSTART:${icsDate(line.from)}`, `DTEND:${icsDate(line.to)}`,
     `SUMMARY:${ics(line.productName)}`, `DESCRIPTION:${ics(`Booking ${booking.ref}`)}`,
     line.meetingUrl ? `URL:${ics(line.meetingUrl)}` : "", "END:VEVENT",
   ].filter(Boolean).join("\r\n")).join("\r\n");
   res.type("text/calendar").set("Content-Disposition", `attachment; filename="${booking.ref}.ics"`)
-    .send(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Reservly//Booking//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\n${events}\r\nEND:VCALENDAR\r\n`);
+    .send(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Bagsy//Booking//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\n${events}\r\nEND:VCALENDAR\r\n`);
 });
 
 manageRouter.get("/:token", (req, res) => {

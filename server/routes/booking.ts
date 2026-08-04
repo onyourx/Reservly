@@ -684,7 +684,7 @@ bookingRouter.get("/reports/appointments.csv", requirePerm("reports"), (req, res
     WHERE date(l.date_from) BETWEEN date(?) AND date(?) ORDER BY l.date_from`).all(from, to) as any[];
   const columns = ["ref","status","type","channel","customer_email","customer_first","customer_last","subtotal","deposit","total","created_at","product_no","product_name","date_from","date_to","qty"];
   const cell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  res.type("text/csv").attachment(`reservly-appointments-${from}-${to}.csv`)
+  res.type("text/csv").attachment(`bagsy-appointments-${from}-${to}.csv`)
     .send([columns.join(","), ...rows.map((r) => columns.map((c) => cell(r[c])).join(","))].join("\n"));
 });
 

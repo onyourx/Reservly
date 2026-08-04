@@ -1,5 +1,5 @@
 // Shopify Admin API client using the client-credentials grant (valid because
-// Reservly is our own org's app installed on our own store): the server exchanges
+// Bagsy is our own org's app installed on our own store): the server exchanges
 // client_id + client_secret for a 24h access token — no OAuth redirect dance.
 import fs from "node:fs";
 import path from "node:path";
@@ -28,7 +28,7 @@ const CUSTOMER_EMAIL_CACHE_TTL_MS = 10 * 60 * 1000;
 async function getToken(): Promise<{ shop: string; token: string }> {
   const s = getSettings();
   const shop = s.shopifyShop.trim().toLowerCase();
-  if (!shop) throw new Error("Set 'Shopify shop' in Settings first (e.g. reservly.myshopify.com)");
+  if (!shop) throw new Error("Set 'Shopify shop' in Settings first (e.g. your-store.myshopify.com)");
   if (!s.shopifyApiSecret) throw new Error("Set 'Shopify API secret' in Settings first");
   const id = clientId();
   if (!id) throw new Error("No Shopify client_id found (shopify.app.toml or Settings)");
@@ -101,8 +101,8 @@ export async function getShopifyCustomerEmail(customerId: string): Promise<strin
  *  (booking.type / booking.product_no). Idempotent: 'taken' errors are fine. */
 export async function ensureMetafieldDefinitions(): Promise<string[]> {
   const defs = [
-    { name: "Booking type", namespace: "booking", key: "type", description: "RENTAL or COURSE — read by the Reservly booking widget" },
-    { name: "Booking product no", namespace: "booking", key: "product_no", description: "NAV LS Activity ProductNo — read by the Reservly booking widget" },
+    { name: "Booking type", namespace: "booking", key: "type", description: "RENTAL or COURSE — read by the Bagsy booking widget" },
+    { name: "Booking product no", namespace: "booking", key: "product_no", description: "NAV LS Activity ProductNo — read by the Bagsy booking widget" },
   ];
   const results: string[] = [];
   for (const def of defs) {

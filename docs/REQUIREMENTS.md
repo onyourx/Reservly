@@ -1,9 +1,9 @@
-# Reservly — Requirements Specification
+# Bagsy — Requirements Specification
 
 **Status:** v1.0 · Living document
 **Origin:** Built for Gosselin Photo (photo/video equipment retailer, Québec) as a
 native replacement for the third-party booking tool ("Sesami") originally evaluated.
-Reservly fulfils the same rental & course-booking requirements directly, integrated
+Bagsy fulfils the same rental & course-booking requirements directly, integrated
 with Shopify and Microsoft Dynamics NAV / LS Central.
 
 Source material:
@@ -179,5 +179,5 @@ Requirement IDs match the source flowchart. "Status" reflects the implementation
 | **WebPOS** | NAV web service for pushing mobile/web transactions to LS Retail POS |
 | **Suspended transaction** | A POS transaction parked (EntryStatus 2) for staff to complete at the till |
 | **BookingRef** | NAV reference returned on reservation; placed on the POS FreeText line to trigger payment |
-| **Tenant** | An isolated Reservly customer (one store group) with its own database |
+| **Tenant** | An isolated Bagsy customer (one store group) with its own database |
 | **Conduit** | The sibling iPaaS that fans booking events out to HubSpot and other systems |

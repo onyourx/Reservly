@@ -1,4 +1,4 @@
-# Reservly — rentals & course bookings
+# Bagsy — rentals & course bookings
 
 A multi-tenant booking platform (built for Gosselin Photo): customers rent
 equipment and book classes **directly in Shopify** (same cart as retail products,

@@ -1,4 +1,4 @@
-/** The Reservly mark (brand book v1.0): two slot bars in a rounded emerald
+/** The Bagsy mark (brand book v1.0): two slot bars in a rounded emerald
  *  tile, the lower one filled and checked — a reservation confirmed. */
 export function LogoMark({ size = 34 }: { size?: number }) {
   return (

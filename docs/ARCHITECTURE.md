@@ -1,6 +1,6 @@
-# Reservly — Architecture
+# Bagsy — Architecture
 
-**Audience:** engineers and integrators working on or around Reservly.
+**Audience:** engineers and integrators working on or around Bagsy.
 Companion to [REQUIREMENTS.md](./REQUIREMENTS.md). Operational detail lives in
 [../DEPLOYMENT.md](../DEPLOYMENT.md), [../RUNNING.md](../RUNNING.md),
 [../API.md](../API.md), and [../PRIVACY.md](../PRIVACY.md).
@@ -9,7 +9,7 @@ Companion to [REQUIREMENTS.md](./REQUIREMENTS.md). Operational detail lives in
 
 ## 1. System context
 
-Reservly sits between the Shopify storefront (customers) and NAV / LS Central
+Bagsy sits between the Shopify storefront (customers) and NAV / LS Central
 (system of record), with staff surfaces on top and event fan-out to Conduit.
 
 ```mermaid
@@ -25,7 +25,7 @@ flowchart TB
     hooks[Webhooks]
   end
 
-  subgraph reservly[Reservly service · Express :4646]
+  subgraph bagsy[Bagsy service · Express :4646]
     api[REST API /api]
     pxy[/proxy · widget backend/]
     wh[/webhooks/shopify/]
@@ -94,7 +94,7 @@ One Node process serves everything on `PORT` (4646). The SPAs are built to
 ```mermaid
 flowchart LR
   subgraph host[Host · Node 20+]
-    node[Reservly service :4646]
+    node[Bagsy service :4646]
     disk[(Encrypted disk<br/>platform.db<br/>booking-*.db + WAL)]
     node --- disk
   end

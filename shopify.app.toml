@@ -1,16 +1,16 @@
-# Shopify app configuration for "Reservly".
+# Shopify app configuration for "Bagsy".
 # Linked to the Partner-dashboard app; `shopify app deploy` from apps/booking
 # publishes the theme extension + this config.
-name = "reservly"
+name = "bagsy"
 client_id = "575f34ce7f7e8707d2dd9c29078525ca"
-application_url = "https://admin.reservlyapp.com"
+application_url = "https://admin.getbagsy.com"
 embedded = false
 
 [access_scopes]
 scopes = "read_products,write_products,read_orders,read_customers,read_publications,write_publications"
 
 [auth]
-redirect_urls = ["https://admin.reservlyapp.com/auth/callback"]
+redirect_urls = ["https://admin.getbagsy.com/auth/callback"]
 
 [webhooks]
 api_version = "2025-07"
@@ -29,7 +29,7 @@ api_version = "2025-07"
 # App Proxy: storefront widget calls /apps/booking/* on the shop domain; Shopify
 # signs and forwards to our server's /proxy/* routes.
 [app_proxy]
-url = "https://admin.reservlyapp.com/proxy"
+url = "https://admin.getbagsy.com/proxy"
 subpath = "booking"
 prefix = "apps"
 

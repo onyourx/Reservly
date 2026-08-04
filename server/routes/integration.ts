@@ -523,13 +523,13 @@ function renderPortalCard(booking: PortalBooking, publicUrl: string): string {
   const token = String(booking.manage_token ?? "").trim();
   const base = String(publicUrl ?? "").replace(/\/+$/, "");
   const manageLink = token
-    ? `<a class="reservly-portal__manage" href="${escapeLiquidData(`${base}/manage/${token}`)}">Manage booking</a>`
+    ? `<a class="bagsy-portal__manage" href="${escapeLiquidData(`${base}/manage/${token}`)}">Manage booking</a>`
     : "";
 
-  return `<article class="reservly-portal__card">
-    <div class="reservly-portal__card-head">
+  return `<article class="bagsy-portal__card">
+    <div class="bagsy-portal__card-head">
       <strong>${escapeLiquidData(booking.ref)}</strong>
-      <span class="reservly-portal__badge${statusClass}">${escapeLiquidData(portalStatus(status))}</span>
+      <span class="bagsy-portal__badge${statusClass}">${escapeLiquidData(portalStatus(status))}</span>
     </div>
     <ul>${lines}</ul>
     ${manageLink}
@@ -551,17 +551,17 @@ export function renderCustomerReservationsPortal(input: {
     ? input.pastBookings.map((booking) => renderPortalCard(booking, input.publicUrl)).join("")
     : "<p>No past or cancelled reservations found.</p>";
 
-  return `<section class="reservly-portal">
+  return `<section class="bagsy-portal">
   <style>
-    .reservly-portal{font:inherit;max-width:860px;margin:0 auto;padding:24px 16px;color:inherit}
-    .reservly-portal h1{margin:0 0 20px}.reservly-portal__card{margin:0 0 14px;padding:18px;border:1px solid #d9d9d9;border-radius:8px}
-    .reservly-portal__card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.reservly-portal__card ul{margin:12px 0;padding-left:22px}
-    .reservly-portal__badge{padding:4px 9px;border-radius:999px;background:#e7f4ec;color:#176b3a;font-size:.8em}.reservly-portal__badge.is-cancelled{background:#f8e7e7;color:#8a2525}
-    .reservly-portal__badge.is-completed{background:#eceff3;color:#4d5968}.reservly-portal__manage{display:inline-block;margin-top:4px}
-    .reservly-portal details{margin-top:24px}.reservly-portal summary{cursor:pointer;font-weight:600;margin-bottom:14px}
+    .bagsy-portal{font:inherit;max-width:860px;margin:0 auto;padding:24px 16px;color:inherit}
+    .bagsy-portal h1{margin:0 0 20px}.bagsy-portal__card{margin:0 0 14px;padding:18px;border:1px solid #d9d9d9;border-radius:8px}
+    .bagsy-portal__card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.bagsy-portal__card ul{margin:12px 0;padding-left:22px}
+    .bagsy-portal__badge{padding:4px 9px;border-radius:999px;background:#e7f4ec;color:#176b3a;font-size:.8em}.bagsy-portal__badge.is-cancelled{background:#f8e7e7;color:#8a2525}
+    .bagsy-portal__badge.is-completed{background:#eceff3;color:#4d5968}.bagsy-portal__manage{display:inline-block;margin-top:4px}
+    .bagsy-portal details{margin-top:24px}.bagsy-portal summary{cursor:pointer;font-weight:600;margin-bottom:14px}
   </style>
   <h1>My reservations</h1>
-  <div class="reservly-portal__active">${active}</div>
+  <div class="bagsy-portal__active">${active}</div>
   <details>
     <summary>Past &amp; cancelled</summary>
     ${past}
@@ -570,7 +570,7 @@ export function renderCustomerReservationsPortal(input: {
 }
 
 function portalMessage(message: string, includeLoginLink = false): string {
-  return `<section class="reservly-portal" style="font:inherit;max-width:860px;margin:0 auto;padding:24px 16px">
+  return `<section class="bagsy-portal" style="font:inherit;max-width:860px;margin:0 auto;padding:24px 16px">
   <h1>My reservations</h1>
   <p>${message}</p>
   ${includeLoginLink ? '<p><a href="/account/login">Sign in to your shop account</a></p>' : ""}

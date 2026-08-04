@@ -1,6 +1,6 @@
 {
-  "name": "Reservly Staff",
-  "short_name": "Reservly",
+  "name": "Bagsy Staff",
+  "short_name": "Bagsy",
   "description": "Gosselin staff app — bookings, packing checklists, customer signatures.",
   "start_url": "/m/",
   "scope": "/m/",

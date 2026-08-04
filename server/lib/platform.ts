@@ -72,7 +72,7 @@ export function seedPlatform() {
   }
   const admin = platformDb.prepare("SELECT * FROM platform_users WHERE email = ?").get(SUPERADMIN_EMAIL) as any;
   if (!admin) {
-    const firstPassword = "reservly-" + crypto.randomBytes(6).toString("hex");
+    const firstPassword = "bagsy-" + crypto.randomBytes(6).toString("hex");
     platformDb.prepare("INSERT INTO platform_users (email, role, password_hash, created_at) VALUES (?, 'superadmin', ?, ?)")
       .run(SUPERADMIN_EMAIL, hashPassword(firstPassword), now());
     console.log(`[platform] Super admin created: ${SUPERADMIN_EMAIL} — first-run password: ${firstPassword} (change it in the Tenants page)`);

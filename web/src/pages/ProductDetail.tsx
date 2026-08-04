@@ -809,7 +809,7 @@ export function ProductDetail() {
             return (
               <div className="btn-row" key={key} style={{ justifyContent: "space-between", marginBottom: 8 }}>
                 <div className="btn-row">
-                  <span className="badge">{suggestion.kind === "SHOPIFY" ? "Shopify" : "Reservly"}</span>
+                  <span className="badge">{suggestion.kind === "SHOPIFY" ? "Shopify" : "Bagsy"}</span>
                   {suggestion.kind === "SHOPIFY" && suggestion.imageUrl && (
                     <img src={suggestion.imageUrl} alt="" style={{ width: 36, height: 36, objectFit: "cover", borderRadius: 4 }} />
                   )}

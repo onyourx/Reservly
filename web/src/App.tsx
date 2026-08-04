@@ -195,7 +195,7 @@ function Shell() {
         <div className="logo">
           <LogoMark size={34} />
           <span className="logo-text">
-            Reservly
+            Bagsy
             <small>Booking Desk</small>
           </span>
         </div>

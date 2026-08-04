@@ -116,7 +116,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
   return (
     <form className="login" onSubmit={(e) => void submit(e)}>
       <LogoMark size={64} />
-      <h1>Reservly Staff</h1>
+      <h1>Bagsy Staff</h1>
       <input
         type="text"
         placeholder="Email"
@@ -223,7 +223,7 @@ function BookingsList({ onOpen, onPrinters }: { onOpen: (id: string) => void; on
   return (
     <div className="screen">
       <header>
-        <span className="brand">Reservly</span>
+        <span className="brand">Bagsy</span>
         <div>
           <button type="button" className="ghost" onClick={load}>⟳</button>
           <button type="button" className="ghost" onClick={onPrinters} style={{ fontSize: "18px" }}>⚙</button>

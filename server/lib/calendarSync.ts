@@ -164,13 +164,13 @@ export async function pushSessionEvent(session: any, resourceId: string): Promis
     const resource = db.prepare("SELECT name FROM resources WHERE id=?").get(resourceId) as { name: string } | undefined;
     const externalId = eventIdFor(session.id, resourceId) || (session.room_id === resourceId ? session.external_event_id : "");
     const payload = row.provider === "GOOGLE" ? {
-      summary: product?.name || "Reservly session",
-      description: `Reservly session ID: ${session.id}\nResource: ${resource?.name || resourceId}`,
+      summary: product?.name || "Bagsy session",
+      description: `Bagsy session ID: ${session.id}\nResource: ${resource?.name || resourceId}`,
       start: { dateTime: session.starts_at || session.startsAt },
       end: { dateTime: session.ends_at || session.endsAt },
     } : {
-      subject: product?.name || "Reservly session",
-      body: { contentType: "text", content: `Reservly session ID: ${session.id}\nResource: ${resource?.name || resourceId}` },
+      subject: product?.name || "Bagsy session",
+      body: { contentType: "text", content: `Bagsy session ID: ${session.id}\nResource: ${resource?.name || resourceId}` },
       start: { dateTime: session.starts_at || session.startsAt, timeZone: "UTC" },
       end: { dateTime: session.ends_at || session.endsAt, timeZone: "UTC" },
     };

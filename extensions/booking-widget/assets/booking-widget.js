@@ -1,4 +1,4 @@
-// Reservly storefront booking modal. Shopify remains the cart/checkout owner;
+// Bagsy storefront booking modal. Shopify remains the cart/checkout owner;
 // this file only selects a booking, obtains a short hold, and fills line properties.
 (function () {
   "use strict";

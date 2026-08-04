@@ -1,6 +1,6 @@
-# Running Reservly
+# Running Bagsy
 
-Reservly has four surfaces served by one Express server (port **4646**):
+Bagsy has four surfaces served by one Express server (port **4646**):
 
 | Surface | Path | Who |
 |---|---|---|
@@ -76,7 +76,7 @@ The Vite dev servers bind to `0.0.0.0`, so you can hot-reload from a phone:
 1. Run one of the modes above and open the staff URL (`…/m` on 4646, or `:5647`)
    in Chrome on the phone.
 2. Chrome menu (⋮) → **Add to Home screen** → **Install**.
-3. It launches full-screen with the Reservly icon, offline shell, and the
+3. It launches full-screen with the Bagsy icon, offline shell, and the
    5‑minute battery standby.
 
 For access outside the local network, put the server behind a public HTTPS host

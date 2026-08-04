@@ -1,4 +1,4 @@
-# CI for the standalone Reservly repo (this directory is exported to
+# CI for the standalone Bagsy repo (this directory is exported to
 # github.com/onyourx/Reservly via `git subtree split --prefix=apps/booking`).
 # npm (not pnpm) on purpose: the split repo has no workspace/lockfile and npm
 # runs the native build scripts (better-sqlite3, esbuild) without a gate.

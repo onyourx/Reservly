@@ -38,9 +38,9 @@ adminRouter.post("/forgot-password", async (req, res) => {
     if (!link) {
       console.error("[platform] password reset requested but PUBLIC_URL is unset or not a valid absolute http(s) URL — no reset email sent");
     } else {
-      const text = `Someone requested a password reset for your Reservly platform account.\n\nReset your password (valid for 30 minutes):\n${link}\n\nIf you didn't request this, ignore this email.`;
-      const html = `<p>Someone requested a password reset for your Reservly platform account.</p>\n<p><a href="${link}">Reset your password</a> (valid for 30 minutes)</p>\n<p>If you didn't request this, ignore this email.</p>`;
-      void sendMail({ to: email, subject: "Reservly — password reset", text, html });
+      const text = `Someone requested a password reset for your Bagsy platform account.\n\nReset your password (valid for 30 minutes):\n${link}\n\nIf you didn't request this, ignore this email.`;
+      const html = `<p>Someone requested a password reset for your Bagsy platform account.</p>\n<p><a href="${link}">Reset your password</a> (valid for 30 minutes)</p>\n<p>If you didn't request this, ignore this email.</p>`;
+      void sendMail({ to: email, subject: "Bagsy — password reset", text, html });
     }
     auditLog("password.reset_requested", "", req.ip ?? "", email);
   }

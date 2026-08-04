@@ -1,6 +1,6 @@
-# Deploying Reservly to production
+# Deploying Bagsy to production
 
-Reservly is a single Node service (Express + better-sqlite3) that serves the
+Bagsy is a single Node service (Express + better-sqlite3) that serves the
 admin SPA, staff PWA, Shopify surfaces, and e-signature pages. It has no external
 database — state lives in SQLite files on disk (one per tenant, plus `platform.db`).
 
