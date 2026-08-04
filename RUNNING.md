@@ -25,7 +25,7 @@ launchd restarts it automatically if it crashes or is killed.
 After code changes, rebuild and restart it:
 
 ```bash
-cd /Users/mike/Documents/Reservly
+cd /Users/mike/Documents/Bagsy
 npx vite build web && npx vite build mobile
 launchctl kickstart -k gui/504/com.reservly.booking
 ```
@@ -38,7 +38,7 @@ Start it again: `launchctl bootstrap gui/504 ~/Library/LaunchAgents/com.reservly
 ### 1. Production / demo — one port, reachable from any device
 
 ```bash
-cd /Users/mike/Documents/Reservly
+cd /Users/mike/Documents/Bagsy
 npm run serve        # builds both SPAs, then serves everything on :4646
 ```
 
@@ -58,7 +58,7 @@ Rebuild (`npm run serve` again) after code changes — this mode serves the
 ### 2. Development — hot reload, also LAN-reachable
 
 ```bash
-cd /Users/mike/Documents/Reservly
+cd /Users/mike/Documents/Bagsy
 npm run dev          # server :4646 + admin :5646 + mobile :5647, all hot-reloading
 ```
 
