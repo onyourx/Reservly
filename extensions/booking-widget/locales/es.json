@@ -7,6 +7,8 @@
     "gsl_fulfillment_pickup": "Recoger",
     "gsl_fulfillment_ship": "Enviarme",
     "gsl_shipping_address": "Dirección de envío",
-    "gsl_shipping_fee": "Envío"
+    "gsl_shipping_fee": "Envío",
+    "gsl_per_day": "/ día",
+    "gsl_per_week": "/ semana"
   }
 }

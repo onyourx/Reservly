@@ -7,6 +7,8 @@
     "gsl_fulfillment_pickup": "Pick up",
     "gsl_fulfillment_ship": "Ship to me",
     "gsl_shipping_address": "Shipping Address",
-    "gsl_shipping_fee": "Shipping"
+    "gsl_shipping_fee": "Shipping",
+    "gsl_per_day": "/ day",
+    "gsl_per_week": "/ week"
   }
 }

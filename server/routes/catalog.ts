@@ -6,6 +6,7 @@ import { getActivityTypes, getActivityProducts, navMode, pushProductToNav } from
 import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels, shopifyGql } from "../lib/shopifyAdmin.js";
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
+import { weeklyPrice } from "../engine/pricing.js";
 import { createZoomMeeting } from "../lib/zoom.js";
 import { deleteSessionEvent, pushSessionEvent } from "../lib/calendarSync.js";
 import { serializeBooking } from "../lib/bookingService.js";
@@ -949,6 +950,7 @@ catalogRouter.post("/products/:id/push-shopify", requirePerm("products"), async 
       await ensureMetafieldDefinitions();
       metafieldDefsEnsured = true;
     }
+    p.weekly_price = weeklyPrice(p.id);
     const result = await pushProductToShopify(p);
     db.prepare("UPDATE products SET shopify_product_id = ?, updated_at = ? WHERE id = ?").run(result.id, now(), p.id);
     // Publish to sales channels (default: both Online Store and POS).

@@ -101,8 +101,10 @@ export async function getShopifyCustomerEmail(customerId: string): Promise<strin
  *  (booking.type / booking.product_no). Idempotent: 'taken' errors are fine. */
 export async function ensureMetafieldDefinitions(): Promise<string[]> {
   const defs = [
-    { name: "Booking type", namespace: "booking", key: "type", description: "RENTAL or COURSE — read by the Bagsy booking widget" },
-    { name: "Booking product no", namespace: "booking", key: "product_no", description: "NAV LS Activity ProductNo — read by the Bagsy booking widget" },
+    { name: "Booking type", namespace: "booking", key: "type", type: "single_line_text_field", description: "RENTAL or COURSE — read by the Bagsy booking widget" },
+    { name: "Booking product no", namespace: "booking", key: "product_no", type: "single_line_text_field", description: "NAV LS Activity ProductNo — read by the Bagsy booking widget" },
+    { name: "Price per day", namespace: "booking", key: "price_per_day", type: "number_decimal", description: "Daily rental rate — shown by the Bagsy booking widget" },
+    { name: "Price per week", namespace: "booking", key: "price_per_week", type: "number_decimal", description: "Weekly rental rate — shown by the Bagsy booking widget" },
   ];
   const results: string[] = [];
   for (const def of defs) {
@@ -113,7 +115,7 @@ export async function ensureMetafieldDefinitions(): Promise<string[]> {
           userErrors { code message }
         }
       }`,
-      { definition: { ...def, ownerType: "PRODUCT", type: "single_line_text_field" } },
+      { definition: { ...def, ownerType: "PRODUCT" } },
     );
     const errs = data.metafieldDefinitionCreate.userErrors ?? [];
     if (data.metafieldDefinitionCreate.createdDefinition) results.push(`${def.namespace}.${def.key}: created`);
@@ -268,11 +270,22 @@ export interface PushableProduct {
   product_no: string; type: string; name: string; web_desc_en: string;
   default_unit_price: number; retail_item: string; image_url: string;
   shopify_product_id: string;
+  weekly_price?: number | null;
 }
 
 /** Create or update the Shopify product for a booking product (one call via
  *  productSet), including price, metafields and image. Returns the product GID. */
 export async function pushProductToShopify(p: PushableProduct): Promise<{ id: string; handle: string }> {
+  const metafields = [
+    { namespace: "booking", key: "type", type: "single_line_text_field", value: p.type },
+    { namespace: "booking", key: "product_no", type: "single_line_text_field", value: p.product_no },
+  ];
+  if (p.type === "RENTAL") {
+    metafields.push({ namespace: "booking", key: "price_per_day", type: "number_decimal", value: String(p.default_unit_price) });
+    if (typeof p.weekly_price === "number" && Number.isFinite(p.weekly_price) && p.weekly_price > 0) {
+      metafields.push({ namespace: "booking", key: "price_per_week", type: "number_decimal", value: String(p.weekly_price) });
+    }
+  }
   const input: Record<string, unknown> = {
     title: p.type === "RENTAL" ? `${p.name} — Rental` : p.name,
     descriptionHtml: p.web_desc_en || "",
@@ -283,10 +296,7 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
       sku: p.retail_item || p.product_no,
       optionValues: [{ optionName: "Title", name: "Default Title" }],
     }],
-    metafields: [
-      { namespace: "booking", key: "type", type: "single_line_text_field", value: p.type },
-      { namespace: "booking", key: "product_no", type: "single_line_text_field", value: p.product_no },
-    ],
+    metafields,
   };
   if (p.shopify_product_id) input.id = p.shopify_product_id;
   let originalSource: string | undefined;

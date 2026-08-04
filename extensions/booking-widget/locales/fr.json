@@ -7,6 +7,8 @@
     "gsl_fulfillment_pickup": "Ramassage",
     "gsl_fulfillment_ship": "Expédier chez moi",
     "gsl_shipping_address": "Adresse d’expédition",
-    "gsl_shipping_fee": "Expédition"
+    "gsl_shipping_fee": "Expédition",
+    "gsl_per_day": "/ jour",
+    "gsl_per_week": "/ semaine"
   }
 }

@@ -22,6 +22,15 @@
     data-i18n-address="{{ 'booking_widget.gsl_shipping_address' | t | escape }}"
     data-i18n-shipping-fee="{{ 'booking_widget.gsl_shipping_fee' | t | escape }}"
   >
+    {%- if btype == 'RENTAL' and product.metafields.booking.price_per_day -%}
+      <div class="gsl-rates">
+        <span class="gsl-rate">{{ product.metafields.booking.price_per_day.value | times: 100 | round | money }} {{ 'booking_widget.gsl_per_day' | t }}</span>
+        {%- if product.metafields.booking.price_per_week -%}
+          <span class="gsl-rate-sep">·</span>
+          <span class="gsl-rate">{{ product.metafields.booking.price_per_week.value | times: 100 | round | money }} {{ 'booking_widget.gsl_per_week' | t }}</span>
+        {%- endif -%}
+      </div>
+    {%- endif -%}
     <button type="button" class="gsl-launch">
       {% case btype %}
         {% when 'RENTAL' %}Check availability

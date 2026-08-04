@@ -32,6 +32,9 @@
   color: #fff;
 }
 
+.gsl-rates { color: var(--gsl-muted); font-size: .8rem; margin: 0 0 .5rem; }
+.gsl-rate { font-weight: 700; }
+.gsl-rate-sep { color: var(--gsl-muted); }
 .gsl-launch { width: 100%; }
 .gsl-launch:hover,
 .gsl-primary:hover:not(:disabled) { filter: brightness(1.06); }
@@ -188,6 +191,21 @@
 .gsl-empty { color: var(--gsl-muted); font-size: .85rem; line-height: 1.5; }
 .gsl-availability-list { border-top: 1px solid var(--gsl-border); padding-top: 8px; }
 .gsl-availability-list p { color: var(--gsl-muted); font-size: .75rem; margin: 5px 0; }
+.gsl-availability-list .gsl-return-hint { color: var(--gsl-text); font-weight: 700; margin: 2px 0 6px; }
+.gsl-return-choice {
+  background: #fff;
+  border: 1px solid var(--gsl-border);
+  border-radius: 8px;
+  color: var(--gsl-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: .75rem;
+  margin: 5px 0;
+  padding: 7px 8px;
+  text-align: left;
+  width: 100%;
+}
+.gsl-return-choice:hover { background: var(--gsl-accent-soft); border-color: var(--gsl-accent); }
 .gsl-slot-group { color: var(--gsl-muted); font-size: .68rem; letter-spacing: .08em; margin: 13px 0 6px; }
 .gsl-slot-list { display: flex; flex-direction: column; gap: 7px; }
 .gsl-slot-row {

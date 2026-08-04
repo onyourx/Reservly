@@ -480,10 +480,27 @@
       panel.appendChild(el("p", "gsl-range-summary",
         readableDate(selected.start) + (selected.end ? " → " + readableDate(selected.end) : " → Select return date")));
       var list = el("div", "gsl-availability-list");
+      if (!selected.end) {
+        list.appendChild(el("p", "gsl-return-hint", "Select your return date:"));
+      }
       Object.keys(availability).filter(function (date) {
         return date >= selected.start && (!selected.end || date <= selected.end);
       }).sort().forEach(function (date) {
-        list.appendChild(el("p", "", availability[date] + " available on " + readableDate(date)));
+        var text = availability[date] + " available on " + readableDate(date);
+        if (!selected.end && availability[date] > 0) {
+          var choice = el("button", "gsl-return-choice", text);
+          choice.type = "button";
+          choice.addEventListener("click", function () {
+            selected.date = date;
+            quote = null;
+            selected.end = date;
+            renderWhen();
+            if (selectionComplete()) refreshQuote();
+          });
+          list.appendChild(choice);
+        } else {
+          list.appendChild(el("p", "", text));
+        }
       });
       panel.appendChild(list);
       renderQuote(panel);
