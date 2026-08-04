@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { db, uid, now, getSettings, pj, auditLog, currentTenant, putSettings } from "../db.js";
 import { getActivityTypes, getActivityProducts, navMode, pushProductToNav } from "../lib/nav.js";
-import { ensureMetafieldDefinitions, pushProductToShopify, publishToChannels, shopifyGql } from "../lib/shopifyAdmin.js";
+import { activateInventoryEverywhere, ensureMetafieldDefinitions, pushProductToShopify, publishToChannels, shopifyGql } from "../lib/shopifyAdmin.js";
 import { emit } from "../lib/events.js";
 import { sessionBooked } from "../engine/availability.js";
 import { weeklyPrice } from "../engine/pricing.js";
@@ -965,13 +965,22 @@ catalogRouter.post("/products/:id/push-shopify", requirePerm("products"), async 
     } catch (err) {
       publishWarning = String((err as Error).message ?? err); // product exists; channels can be fixed in admin
     }
+    let stockedLocations = 0;
+    let locationsWarning = "";
+    try {
+      if (result.inventoryItemId) stockedLocations = await activateInventoryEverywhere(result.inventoryItemId);
+    } catch (err) {
+      locationsWarning = String((err as Error).message ?? err);
+    }
     emit(null, "shopify.product_pushed", { productNo: p.product_no, shopifyProductId: result.id, publishedTo });
     res.json({
       product: serializeProduct(db.prepare("SELECT * FROM products WHERE id = ?").get(p.id)),
       shopifyProductId: result.id,
       handle: result.handle,
       publishedTo,
+      stockedLocations,
       ...(publishWarning ? { publishWarning } : {}),
+      ...(locationsWarning ? { locationsWarning } : {}),
     });
   } catch (err) {
     console.warn("[shopify] product push failed", p.product_no, err);

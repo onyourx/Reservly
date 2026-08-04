@@ -266,6 +266,26 @@ export async function publishToChannels(
   return wanted.map((p) => p.name);
 }
 
+/** Stock the item at every active location so Shopify shows them all as fulfilling. */
+export async function activateInventoryEverywhere(inventoryItemId: string): Promise<number> {
+  const d = await shopifyGql<{ locations: { nodes: { id: string }[] } }>(
+    `{ locations(first: 20, includeInactive: false) { nodes { id } } }`,
+  );
+  const nodes = d.locations.nodes;
+  if (nodes.length === 0) return 0;
+  const result = await shopifyGql<{ inventoryBulkToggleActivation: { userErrors: { message: string }[] } }>(
+    `mutation($id: ID!, $updates: [InventoryBulkToggleActivationInput!]!) {
+      inventoryBulkToggleActivation(inventoryItemId: $id, inventoryItemUpdates: $updates) {
+        userErrors { message }
+      }
+    }`,
+    { id: inventoryItemId, updates: nodes.map((l) => ({ locationId: l.id, activate: true })) },
+  );
+  const errs = result.inventoryBulkToggleActivation.userErrors ?? [];
+  if (errs.length) throw new Error(`inventoryBulkToggleActivation: ${errs.map((e) => e.message).join("; ")}`);
+  return nodes.length;
+}
+
 export interface PushableProduct {
   product_no: string; type: string; name: string; web_desc_en: string;
   default_unit_price: number; retail_item: string; image_url: string;
@@ -275,7 +295,7 @@ export interface PushableProduct {
 
 /** Create or update the Shopify product for a booking product (one call via
  *  productSet), including price, metafields and image. Returns the product GID. */
-export async function pushProductToShopify(p: PushableProduct): Promise<{ id: string; handle: string }> {
+export async function pushProductToShopify(p: PushableProduct): Promise<{ id: string; handle: string; inventoryItemId: string }> {
   const metafields = [
     { namespace: "booking", key: "type", type: "single_line_text_field", value: p.type },
     { namespace: "booking", key: "product_no", type: "single_line_text_field", value: p.product_no },
@@ -313,10 +333,10 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
   }
   if (originalSource) input.files = [{ originalSource, contentType: "IMAGE" }];
 
-  const runSet = () => shopifyGql<{ productSet: { product: { id: string; handle: string } | null; userErrors: { field: string[]; message: string }[] } }>(
+  const runSet = () => shopifyGql<{ productSet: { product: { id: string; handle: string; variants: { nodes: { inventoryItem: { id: string } | null }[] } } | null; userErrors: { field: string[]; message: string }[] } }>(
     `mutation($input: ProductSetInput!) {
       productSet(input: $input) {
-        product { id handle }
+        product { id handle variants(first: 1) { nodes { inventoryItem { id } } } }
         userErrors { field message }
       }
     }`,
@@ -331,5 +351,5 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
     errs = data.productSet.userErrors ?? [];
   }
   if (!data.productSet.product) throw new Error(`productSet: ${errs.map((e) => e.message).join("; ") || "no product returned"}`);
-  return data.productSet.product;
+  return { id: data.productSet.product.id, handle: data.productSet.product.handle, inventoryItemId: data.productSet.product.variants.nodes[0]?.inventoryItem?.id ?? "" };
 }
