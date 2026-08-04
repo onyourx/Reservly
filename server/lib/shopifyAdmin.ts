@@ -291,7 +291,7 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
   if (p.shopify_product_id) input.id = p.shopify_product_id;
   if (p.image_url) input.files = [{ originalSource: p.image_url, contentType: "IMAGE" }];
 
-  const data = await shopifyGql<{ productSet: { product: { id: string; handle: string } | null; userErrors: { field: string[]; message: string }[] } }>(
+  const runSet = () => shopifyGql<{ productSet: { product: { id: string; handle: string } | null; userErrors: { field: string[]; message: string }[] } }>(
     `mutation($input: ProductSetInput!) {
       productSet(input: $input) {
         product { id handle }
@@ -300,7 +300,14 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
     }`,
     { input },
   );
-  const errs = data.productSet.userErrors ?? [];
+  let data = await runSet();
+  let errs = data.productSet.userErrors ?? [];
+  if (input.id && !data.productSet.product && errs.some((e) => (e.field ?? []).includes("id") || /does not exist|not found/i.test(e.message))) {
+    // A stale id from a previous store must fall back to creating a new product.
+    delete input.id;
+    data = await runSet();
+    errs = data.productSet.userErrors ?? [];
+  }
   if (!data.productSet.product) throw new Error(`productSet: ${errs.map((e) => e.message).join("; ") || "no product returned"}`);
   return data.productSet.product;
 }
