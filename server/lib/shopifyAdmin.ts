@@ -289,7 +289,17 @@ export async function pushProductToShopify(p: PushableProduct): Promise<{ id: st
     ],
   };
   if (p.shopify_product_id) input.id = p.shopify_product_id;
-  if (p.image_url) input.files = [{ originalSource: p.image_url, contentType: "IMAGE" }];
+  let originalSource: string | undefined;
+  if (/^https?:\/\//i.test(p.image_url ?? "")) {
+    originalSource = p.image_url;
+  } else if (p.image_url) {
+    const publicUrl = getSettings().publicUrl;
+    if (typeof publicUrl === "string" && publicUrl.trim()) {
+      // Shopify downloads originalSource server-side, so it must be an absolute, publicly reachable URL.
+      originalSource = `${publicUrl.replace(/\/+$/, "")}/${String(p.image_url).replace(/^\/+/, "")}`;
+    }
+  }
+  if (originalSource) input.files = [{ originalSource, contentType: "IMAGE" }];
 
   const runSet = () => shopifyGql<{ productSet: { product: { id: string; handle: string } | null; userErrors: { field: string[]; message: string }[] } }>(
     `mutation($input: ProductSetInput!) {

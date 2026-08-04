@@ -972,6 +972,7 @@ catalogRouter.post("/products/:id/push-shopify", requirePerm("products"), async 
       ...(publishWarning ? { publishWarning } : {}),
     });
   } catch (err) {
+    console.warn("[shopify] product push failed", p.product_no, err);
     res.status(502).json({ error: String((err as Error).message ?? err) });
   }
 });

@@ -128,6 +128,13 @@ settingsRouter.put("/settings", requireOwner, (req, res) => {
       rest.currency = normalized;
     }
   }
+  if ("shopifyShop" in rest) {
+    rest.shopifyShop = String(rest.shopifyShop ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/.*$/, "");
+  }
   for (const key of ["contractTemplate", "reminderPickupTemplate", "reminderReturnTemplate"]) {
     if (typeof rest[key] !== "string") continue;
     rest[key] = rest[key]
