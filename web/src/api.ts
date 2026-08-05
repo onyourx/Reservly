@@ -355,6 +355,10 @@ export interface Booking {
   posReceiptNo: string | null;
   shopifyOrderId: string | null;
   shopifyOrderName: string | null;
+  parentBookingId?: string;
+  parentRef?: string;
+  isParent?: boolean;
+  children?: { id: string; ref: string; type: BookingType; status: BookingStatus; total: number }[];
   idOnFile: boolean;
   idLast4?: string;
   idPhotoAt?: string;

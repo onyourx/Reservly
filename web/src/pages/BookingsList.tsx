@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, qs } from "../api";
 import type { BookingLite, BookingStatus } from "../api";
@@ -39,6 +39,7 @@ export function BookingsList() {
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [dateFilter, setDateFilter] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const [bookings, setBookings] = useState<BookingLite[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,6 +67,70 @@ export function BookingsList() {
   }, [status, type, storeFilter, debouncedQ, dateFilter]);
 
   useEffect(load, [load]);
+
+  const bookingsById = new Map((bookings ?? []).map((b) => [b.id, b]));
+  const topLevelBookings = (bookings ?? []).filter(
+    (b) => !b.parentBookingId || !bookingsById.has(b.parentBookingId),
+  );
+
+  const renderRow = (b: BookingLite, child = false) => {
+    const children = (bookings ?? []).filter((booking) => booking.parentBookingId === b.id);
+    const isParent = children.length > 0;
+    const isOrphan = Boolean(b.parentBookingId && !bookingsById.has(b.parentBookingId));
+
+    return (
+      <tr
+        key={b.id}
+        className={child ? "clickable child-row" : "clickable"}
+        onClick={() => navigate(`/bookings/${b.id}`)}
+      >
+        <td className={child ? "mono child-ref" : "mono"}>
+          {child && <span className="child-ref-prefix">└</span>}
+          {isParent && (
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={collapsed.has(b.id) ? "Expand booking group" : "Collapse booking group"}
+              onClick={(e) => {
+                e.stopPropagation();
+                setCollapsed((current) => {
+                  const next = new Set(current);
+                  if (next.has(b.id)) next.delete(b.id);
+                  else next.add(b.id);
+                  return next;
+                });
+              }}
+            >
+              {collapsed.has(b.id) ? "▸" : "▾"}
+            </button>
+          )}
+          {b.ref}
+          {isOrphan && (
+            <span className="badge" style={{ marginLeft: 6 }}>
+              {t("Order")} {b.parentRef}
+            </span>
+          )}
+        </td>
+        <td>
+          {b.customer ? `${b.customer.firstName} ${b.customer.lastName}` : "—"}
+          {b.customer?.b2b && (
+            <span className="badge" style={{ marginLeft: 6 }}>
+              B2B
+            </span>
+          )}
+        </td>
+        <td className="muted">
+          {isParent ? `${t("Order")} · ${children.length} ${t("items")}` : b.type}
+        </td>
+        <td className="muted">{storeName(b.storeId)}</td>
+        <td className="muted">{lineDates(b)}</td>
+        <td className="num">{money(b.total, b.currency)}</td>
+        <td>
+          <StatusPill status={b.status} />
+        </td>
+      </tr>
+    );
+  };
 
   return (
     <div className="page">
@@ -157,30 +222,15 @@ export function BookingsList() {
                 </tr>
               </thead>
               <tbody>
-                {bookings.map((b) => (
-                  <tr
-                    key={b.id}
-                    className="clickable"
-                    onClick={() => navigate(`/bookings/${b.id}`)}
-                  >
-                    <td className="mono">{b.ref}</td>
-                    <td>
-                      {b.customer ? `${b.customer.firstName} ${b.customer.lastName}` : "—"}
-                      {b.customer?.b2b && (
-                        <span className="badge" style={{ marginLeft: 6 }}>
-                          B2B
-                        </span>
-                      )}
-                    </td>
-                    <td className="muted">{b.type}</td>
-                    <td className="muted">{storeName(b.storeId)}</td>
-                    <td className="muted">{lineDates(b)}</td>
-                    <td className="num">{money(b.total, b.currency)}</td>
-                    <td>
-                      <StatusPill status={b.status} />
-                    </td>
-                  </tr>
-                ))}
+                {topLevelBookings.map((b) => {
+                  const children = bookings.filter((booking) => booking.parentBookingId === b.id);
+                  return (
+                    <Fragment key={b.id}>
+                      {renderRow(b)}
+                      {!collapsed.has(b.id) && children.map((child) => renderRow(child, true))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

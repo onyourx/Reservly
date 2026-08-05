@@ -5,6 +5,8 @@ type Messages = Record<string, string>;
 
 const messages: Record<UiLanguage, Messages> = {
   en: {
+    Order: "Order", items: "items", "Bookings in this order": "Bookings in this order",
+    "Part of order": "Part of order", "Status follows the bookings in this order": "Status follows the bookings in this order",
     "calendarSync.title": "Calendar Sync", "calendarSync.enabled": "Enabled", "calendarSync.enabledToggle": "Enable automatic calendar sync",
     "calendarSync.google.title": "Google Calendar", "calendarSync.google.clientId": "Google client ID", "calendarSync.google.clientSecret": "Google client secret",
     "calendarSync.microsoft.title": "Microsoft Outlook", "calendarSync.microsoft.clientId": "Microsoft client ID", "calendarSync.microsoft.tenantId": "Microsoft tenant ID", "calendarSync.microsoft.clientSecret": "Microsoft client secret",
@@ -282,6 +284,8 @@ const messages: Record<UiLanguage, Messages> = {
     "All activity": "Toute l’activité", Pickups: "Ramassages", Returns: "Retours", Classes: "Cours",
     "On rent": "En location", "All clear": "Tout est en ordre", "Nothing scheduled": "Rien de prévu",
     "Rentals and course reservations": "Locations et réservations de cours",
+    Order: "Commande", items: "articles", "Bookings in this order": "Réservations de cette commande",
+    "Part of order": "Fait partie de la commande", "Status follows the bookings in this order": "Le statut suit les réservations de cette commande",
     "All statuses": "Tous les statuts", "All types": "Tous les types", Rental: "Location",
     Course: "Cours", Mixed: "Mixte", Customer: "Client", Type: "Type", Dates: "Dates", Total: "Total",
     Status: "Statut", "Rental equipment and courses synced from NAV": "Équipement et cours synchronisés depuis NAV",
@@ -490,6 +494,8 @@ const messages: Record<UiLanguage, Messages> = {
     "All activity": "Toda la actividad", Pickups: "Recogidas", Returns: "Devoluciones", Classes: "Clases",
     "On rent": "Alquilado", "All clear": "Todo en orden", "Nothing scheduled": "Nada programado",
     "Rentals and course reservations": "Alquileres y reservas de cursos",
+    Order: "Pedido", items: "artículos", "Bookings in this order": "Reservas de este pedido",
+    "Part of order": "Parte del pedido", "Status follows the bookings in this order": "El estado sigue las reservas de este pedido",
     "All statuses": "Todos los estados", "All types": "Todos los tipos", Rental: "Alquiler",
     Course: "Curso", Mixed: "Mixto", Customer: "Cliente", Type: "Tipo", Dates: "Fechas", Total: "Total",
     Status: "Estado", "Rental equipment and courses synced from NAV": "Equipos y cursos sincronizados desde NAV",

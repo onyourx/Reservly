@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, copyToClipboard } from "../api";
 import type { Booking, DamageRow, ExtensionRequest, ExtensionRequestsResponse, RentalUnit } from "../api";
 import { fmtDate, fmtDateTime, money } from "../format";
@@ -34,6 +34,7 @@ function formatEventDetail(detail: unknown): string {
 
 export function BookingDetail() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const toast = useToast();
   const { t } = useI18n();
   const { storeName } = useStores();
@@ -246,6 +247,112 @@ export function BookingDetail() {
   }
 
   const b = booking;
+  if (b.isParent) {
+    const parentEvents = [...b.events].sort((a, c) => (a.at < c.at ? 1 : -1));
+    return (
+      <div className="page">
+        <div className="detail-head">
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <h1 className="mono">{b.ref}</h1>
+              <StatusPill status={b.status} />
+            </div>
+            <div className="detail-meta">
+              <div className="meta-item">
+                <span className="meta-label">Customer</span>
+                <span>
+                  {b.customer.firstName} {b.customer.lastName}
+                  {b.customer.b2b ? " (B2B)" : ""}
+                </span>
+                <span className="faint">
+                  {b.customer.email}
+                  {b.customer.phone ? ` · ${b.customer.phone}` : ""}
+                </span>
+              </div>
+              <div className="meta-item">
+                <span className="meta-label">Channel</span>
+                <span>{b.channel}</span>
+              </div>
+              {b.shopifyOrderId && (
+                <div className="meta-item">
+                  <span className="meta-label">Shopify order</span>
+                  <span className="mono">{b.shopifyOrderName ?? b.shopifyOrderId}</span>
+                </div>
+              )}
+              <div className="meta-item">
+                <span className="meta-label">Created</span>
+                <span>{fmtDateTime(b.createdAt)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 18 }}>
+          <h2 className="card-title">{t("Bookings in this order")}</h2>
+          {!b.children || b.children.length === 0 ? (
+            <EmptyState title="No bookings in this order yet" />
+          ) : (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Ref</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th className="num">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {b.children.map((child) => (
+                    <tr
+                      key={child.id}
+                      className="clickable"
+                      onClick={() => navigate(`/bookings/${child.id}`)}
+                    >
+                      <td className="mono">{child.ref}</td>
+                      <td className="muted">{child.type}</td>
+                      <td><StatusPill status={child.status} /></td>
+                      <td className="num">{money(child.total, b.currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div style={{ height: 18 }} />
+          <div className="fin-row">
+            <span className="muted">Subtotal</span>
+            <span>{money(b.subtotal, b.currency)}</span>
+          </div>
+          <div className="fin-row">
+            <span className="muted">Deposit</span>
+            <span>{money(b.deposit, b.currency)}</span>
+          </div>
+          <div className="fin-row total">
+            <span>Total</span>
+            <span>{money(b.total, b.currency)}</span>
+          </div>
+          <div className="muted">{t("Status follows the bookings in this order")}</div>
+          <hr className="divider" />
+          <h2 className="card-title">Timeline</h2>
+          {parentEvents.length === 0 ? (
+            <EmptyState title="No events yet" />
+          ) : (
+            <ul className="timeline">
+              {parentEvents.map((e, i) => (
+                <li key={i}>
+                  <span className="tl-type">{e.type}</span>
+                  {formatEventDetail(e.detail) && <span className="muted"> — {formatEventDetail(e.detail)}</span>}
+                  <div className="faint">{fmtDateTime(e.at)}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const hasRentals = b.lines.some((l) => l.type === "RENTAL");
   const hasCourses = b.lines.some((l) => l.type === "COURSE");
   const active = b.status !== "COMPLETED" && b.status !== "CANCELLED";
@@ -332,6 +439,12 @@ export function BookingDetail() {
               <div className="meta-item">
                 <span className="meta-label">Shopify order</span>
                 <span className="mono">{b.shopifyOrderName ?? b.shopifyOrderId}</span>
+              </div>
+            )}
+            {b.parentBookingId && (
+              <div className="meta-item">
+                <span className="meta-label">{t("Part of order")}</span>
+                <Link to={`/bookings/${b.parentBookingId}`} className="mono">{b.parentRef}</Link>
               </div>
             )}
             <div className="meta-item">

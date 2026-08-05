@@ -414,6 +414,15 @@ table.table {
   background: #fafbfe;
 }
 
+.table .child-ref {
+  padding-left: 24px;
+}
+
+.child-ref-prefix {
+  margin-right: 6px;
+  color: var(--text-faint);
+}
+
 .muted {
   color: var(--text-soft);
 }
