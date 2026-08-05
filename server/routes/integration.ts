@@ -15,7 +15,7 @@ import { bootstrapOpen, isAuthenticated, login, logout, requireOwner, staffAcces
 import { adminSession, listTenants, openTenantDb } from "../lib/platform.js";
 import { getStaffSession, staffTokenOf } from "../lib/staffSessions.js";
 import { collectCustomerData, redactCustomer, sweepRetention } from "../lib/privacy.js";
-import { BookingValidationError, createBooking } from "../lib/bookingService.js";
+import { BookingValidationError, createBookings } from "../lib/bookingService.js";
 import { quoteLines } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
 import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhotos.js";
@@ -307,7 +307,7 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
       }
     }
 
-    const existing = db.prepare("SELECT id FROM bookings WHERE shopify_order_id = ?").get(String(order.id)) as any;
+    const existing = db.prepare("SELECT id FROM bookings WHERE shopify_order_id = ? AND status != 'CANCELLED'").get(String(order.id)) as any;
     if (existing) return;
 
     const lines: any[] = [];
@@ -344,7 +344,7 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
       const key = `terms${props._booking_type[0]}${props._booking_type.slice(1).toLowerCase()}Enabled`;
       return settings[key] !== "1" || String(props._terms_accepted).toLowerCase() === "true";
     });
-    const booking = await createBooking({
+    const booking = await createBookings({
       customer: {
         email: order.email || order.customer?.email || "unknown@web",
         firstName: order.customer?.first_name, lastName: order.customer?.last_name,
@@ -367,7 +367,13 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
       fulfillment: bookingProperties._fulfillment,
       shipAddress: bookingProperties._ship_address,
     });
-    void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
+    if (booking.isParent) {
+      for (const child of booking.children) {
+        void sendClassTicketEmail(child.id).catch((err) => console.warn("[ticketEmail]", err));
+      }
+    } else {
+      void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
+    }
   } catch (err) {
     db.prepare("INSERT INTO events (booking_id, type, detail, at) VALUES (NULL, 'shopify.order_failed', ?, ?)")
       .run(JSON.stringify({ orderId: order?.id, error: String(err) }), new Date().toISOString());
@@ -692,7 +698,7 @@ proxyRouter.get("/product-fields", (req, res) => {
 
 proxyRouter.post("/bookings", async (req, res) => {
   try {
-    const booking = await createBooking({
+    const booking = await createBookings({
       customer: req.body?.customer,
       storeId: req.body?.storeId,
       channel: "WEB",

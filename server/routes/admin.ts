@@ -73,7 +73,7 @@ adminRouter.get("/tenants", (_req, res) => {
       if (d) {
         stats = {
           bookings: (d.prepare("SELECT COUNT(*) AS n FROM bookings").get() as any).n,
-          revenue: (d.prepare("SELECT COALESCE(SUM(total),0) AS n FROM bookings WHERE status != 'CANCELLED'").get() as any).n,
+          revenue: (d.prepare("SELECT COALESCE(SUM(total),0) AS n FROM bookings WHERE status != 'CANCELLED' AND is_parent = 0").get() as any).n,
           products: (d.prepare("SELECT COUNT(*) AS n FROM products").get() as any).n,
           upcoming: (d.prepare("SELECT COUNT(DISTINCT booking_id) AS n FROM booking_lines WHERE date(date_from) >= date('now')").get() as any).n,
         };

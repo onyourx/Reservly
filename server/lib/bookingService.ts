@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import { db, uid, now, pj, j, getSettings, auditLog } from "../db.js";
 import { quoteLines, round2, type QuoteLineIn } from "../engine/pricing.js";
-import { confirmReservation } from "./nav.js";
+import { cancelReservation, confirmReservation } from "./nav.js";
 import { idLast4 } from "./crypto.js";
 import { emit } from "./events.js";
 import { scheduleBookingReminders } from "./notifications.js";
@@ -26,7 +26,7 @@ function newRef(): string {
   return "BK-" + Date.now().toString(36).toUpperCase().slice(-5) + crypto.randomBytes(2).toString("hex").toUpperCase();
 }
 
-export async function createBooking(input: {
+export interface CreateBookingInput {
   customer: CustomerIn;
   storeId?: string;
   channel: "STAFF" | "WEB";
@@ -44,7 +44,11 @@ export async function createBooking(input: {
   fulfillment?: "PICKUP" | "SHIP" | string;
   shipAddress?: string;
   addons?: { productNo: string; name: string; qty: number; unitPrice: number; shopifyVariantId?: string }[];
-}) {
+  parentBookingId?: string;
+  shippingFeeExcludeProductNos?: string[];
+}
+
+export async function createBooking(input: CreateBookingInput) {
   if (!input.customer?.email) throw new Error("customer.email is required");
   if (!input.lines?.length) throw new Error("At least one line is required");
   const quoted = quoteLines(input.lines);
@@ -158,6 +162,7 @@ export async function createBooking(input: {
     if (fulfillment === "SHIP") {
       const defaultShippingFee = Math.max(0, Number(settings.shippingFeeDefault) || 0);
       shippingFee = round2(rentalProductNos.reduce((sum, productNo) => {
+        if (input.shippingFeeExcludeProductNos?.includes(productNo)) return sum;
         const fee = Number(byProductNo.get(productNo)?.shipping_fee) || 0;
         return sum + (fee > 0 ? fee : defaultShippingFee);
       }, 0));
@@ -196,8 +201,8 @@ export async function createBooking(input: {
     `INSERT INTO bookings (id, ref, type, status, channel, store_id, customer_email, customer_first,
        customer_last, customer_phone, customer_b2b, subtotal, deposit, total, currency,
        shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, terms_accepted_at,
-       fulfillment, ship_address, shipping_fee, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       fulfillment, ship_address, shipping_fee, created_at, updated_at, parent_booking_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, ref, type, status, input.channel, input.storeId ?? null,
     input.customer.email, input.customer.firstName ?? "", input.customer.lastName ?? "",
@@ -206,6 +211,7 @@ export async function createBooking(input: {
     input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "", manageToken,
     j(storedResponses), input.termsAccepted === true ? now() : null,
     fulfillment, fulfillment === "SHIP" ? shipAddress : "", shippingFee, now(), now(),
+    input.parentBookingId ?? "",
   );
 
   for (const line of quoted.lines) {
@@ -289,6 +295,99 @@ export async function createBooking(input: {
   return serializeBooking(id)!;
 }
 
+export async function createBookings(input: Omit<CreateBookingInput, "parentBookingId">) {
+  const groups: QuoteLineIn[][] = [];
+  const rentalGroups = new Map<string, QuoteLineIn[]>();
+  for (const line of input.lines) {
+    if (line.type !== "RENTAL") {
+      groups.push([line]);
+      continue;
+    }
+    const key = line.from + "|" + line.to;
+    let group = rentalGroups.get(key);
+    if (!group) {
+      group = [];
+      rentalGroups.set(key, group);
+      groups.push(group);
+    }
+    group.push(line);
+  }
+
+  if (groups.length < 2) return createBooking(input);
+
+  const parentId = uid();
+  const parentRef = newRef();
+  db.prepare(
+    `INSERT INTO bookings (id, ref, type, status, channel, store_id, customer_email, customer_first,
+       customer_last, customer_phone, customer_b2b, subtotal, deposit, total, currency,
+       shopify_order_id, shopify_order_name, notes, manage_token, intake_responses, terms_accepted_at,
+       fulfillment, ship_address, shipping_fee, created_at, updated_at, parent_booking_id, is_parent)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    parentId, parentRef, "MIXED", input.paid ? "PAID" : "RESERVED", input.channel, input.storeId ?? null,
+    input.customer.email, input.customer.firstName ?? "", input.customer.lastName ?? "",
+    input.customer.phone ?? "", input.customer.b2b ? 1 : 0,
+    0, 0, 0, getSettings().currency || "CAD",
+    input.shopifyOrderId ?? "", input.shopifyOrderName ?? "", input.notes ?? "",
+    crypto.randomBytes(24).toString("base64url"), j({}), null,
+    "PICKUP", "", 0, now(), now(), "", 1,
+  );
+
+  const rentalGroupIndex = groups.findIndex((group) => group[0]?.type === "RENTAL");
+  const addonTargetIndex = rentalGroupIndex === -1 ? 0 : rentalGroupIndex;
+  const children: NonNullable<ReturnType<typeof serializeBooking>>[] = [];
+  const feeChargedProductNos: string[] = [];
+  try {
+    for (let i = 0; i < groups.length; i += 1) {
+      const child = await createBooking({
+        ...input,
+        lines: groups[i],
+        parentBookingId: parentId,
+        addons: i === addonTargetIndex ? input.addons : undefined,
+        holdToken: i === 0 ? input.holdToken : undefined,
+        shippingFeeExcludeProductNos: feeChargedProductNos,
+      });
+      children.push(child);
+      const rentalProductNos = [...new Set(groups[i]
+        .filter((line) => line.type === "RENTAL")
+        .map((line) => line.productNo)
+        .filter((productNo): productNo is string => typeof productNo === "string"))];
+      for (const productNo of rentalProductNos) {
+        if (!feeChargedProductNos.includes(productNo)) feeChargedProductNos.push(productNo);
+      }
+    }
+  } catch (err) {
+    for (const child of children) {
+      const lines = db.prepare("SELECT activity_no FROM booking_lines WHERE booking_id = ? AND activity_no != ''").all(child.id) as { activity_no: string }[];
+      for (const l of lines) {
+        try {
+          await cancelReservation(l.activity_no, input.customer.email);
+        } catch (err) {
+          emit(child.id, "nav.cancel_failed", { activityNo: l.activity_no, error: String(err) });
+        }
+      }
+      setStatus(child.id, "CANCELLED", "booking.cancelled", { reason: "sibling_failed" });
+    }
+    db.prepare("UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?").run("CANCELLED", now(), parentId);
+    emit(parentId, "booking.cancelled", { reason: "sibling_failed" });
+    throw err;
+  }
+
+  const totals = db.prepare(
+    "SELECT COALESCE(SUM(subtotal),0) AS subtotal, COALESCE(SUM(deposit),0) AS deposit, COALESCE(SUM(total),0) AS total FROM bookings WHERE parent_booking_id = ?",
+  ).get(parentId) as { subtotal: number; deposit: number; total: number };
+  db.prepare("UPDATE bookings SET subtotal = ?, deposit = ?, total = ?, updated_at = ? WHERE id = ?")
+    .run(totals.subtotal, totals.deposit, totals.total, now(), parentId);
+
+  emit(parentId, "order.created", {
+    ref: parentRef, type: "MIXED", channel: input.channel,
+    email: input.customer.email, total: totals.total,
+    childRefs: children.map((child) => child.ref),
+  });
+
+  return serializeBooking(parentId)!;
+}
+
 export function serializeBooking(id: string) {
   const b = db.prepare("SELECT * FROM bookings WHERE id = ? OR ref = ?").get(id, id) as any;
   if (!b) return null;
@@ -329,8 +428,18 @@ export function serializeBooking(id: string) {
     at: e.at, type: e.type, detail: pj(e.detail, {}),
   }));
   const fieldResponses = pj(b.intake_responses, {});
+  const parentBookingId = b.parent_booking_id || "";
+  let parentRef = "";
+  if (parentBookingId) {
+    const parent = db.prepare("SELECT ref FROM bookings WHERE id = ?").get(parentBookingId) as { ref: string } | undefined;
+    parentRef = parent?.ref || "";
+  }
+  const children = db.prepare(
+    "SELECT id, ref, type, status, total FROM bookings WHERE parent_booking_id = ?",
+  ).all(b.id) as { id: string; ref: string; type: string; status: string; total: number }[];
   return {
     id: b.id, ref: b.ref, type: b.type, status: b.status, channel: b.channel, storeId: b.store_id,
+    parentBookingId, parentRef, isParent: !!b.is_parent, children,
     customer: {
       email: b.customer_email, firstName: b.customer_first, lastName: b.customer_last,
       phone: b.customer_phone, b2b: !!b.customer_b2b,
@@ -361,6 +470,26 @@ export function serializeBooking(id: string) {
 export function setStatus(bookingId: string, status: string, eventType: string, detail: Record<string, unknown> = {}) {
   db.prepare("UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?").run(status, now(), bookingId);
   emit(bookingId, eventType, detail);
+  const row = db.prepare("SELECT parent_booking_id FROM bookings WHERE id = ?").get(bookingId) as { parent_booking_id: string } | undefined;
+  const parentId = row?.parent_booking_id || "";
+  if (parentId) {
+    const children = db.prepare("SELECT status FROM bookings WHERE parent_booking_id = ?").all(parentId) as { status: string }[];
+    let nextStatus: string | null = null;
+    if (children.length && children.every((child) => child.status === "CANCELLED")) {
+      nextStatus = "CANCELLED";
+    } else if (children.length
+      && children.every((child) => ["COMPLETED", "RETURNED", "CANCELLED"].includes(child.status))
+      && children.some((child) => child.status !== "CANCELLED")) {
+      nextStatus = "COMPLETED";
+    }
+    if (nextStatus) {
+      const parent = db.prepare("SELECT status FROM bookings WHERE id = ?").get(parentId) as { status: string } | undefined;
+      if (parent && parent.status !== nextStatus) {
+        db.prepare("UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?").run(nextStatus, now(), parentId);
+        emit(parentId, "booking.status_recomputed", { status: nextStatus, from: parent.status });
+      }
+    }
+  }
 }
 
 export function recomputeRefund(bookingId: string) {

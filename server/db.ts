@@ -232,7 +232,9 @@ CREATE TABLE IF NOT EXISTS bookings (
   notes TEXT DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  ticket_emailed_at TEXT
+  ticket_emailed_at TEXT,
+  parent_booking_id TEXT DEFAULT '',
+  is_parent INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS booking_lines (
@@ -528,6 +530,9 @@ CREATE TABLE IF NOT EXISTS staff_users (
     "ALTER TABLE bookings ADD COLUMN shipping_fee REAL NOT NULL DEFAULT 0",
     "ALTER TABLE sessions ADD COLUMN external_event_id TEXT DEFAULT ''",
     "ALTER TABLE resource_blocks ADD COLUMN external_event_id TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN parent_booking_id TEXT DEFAULT ''",
+    "ALTER TABLE bookings ADD COLUMN is_parent INTEGER NOT NULL DEFAULT 0",
+    "CREATE INDEX IF NOT EXISTS idx_bookings_parent ON bookings(parent_booking_id)",
   ]) {
     try {
       d.exec(stmt);

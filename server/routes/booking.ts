@@ -5,7 +5,7 @@ import path from "node:path";
 import { db, now, j, localDate, auditLog, getSettings, currentTenant, DEFAULT_TENANT_SLUG } from "../db.js";
 import { quoteLines, round2 } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
-import { BookingValidationError, createBooking, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
+import { BookingValidationError, createBookings, serializeBooking, setStatus, recomputeRefund } from "../lib/bookingService.js";
 import { cancelReservation, posMappingForStore, webPosSuspend } from "../lib/nav.js";
 import { encryptId } from "../lib/crypto.js";
 import { emit } from "../lib/events.js";
@@ -164,6 +164,7 @@ bookingRouter.post("/quote", (req, res) => {
 bookingRouter.get("/bookings/:id/refund-quote", requirePerm("bookings"), (req, res) => {
   try {
     const booking = mustGet(req, req.params.id);
+    if (booking.is_parent) return res.status(400).json({ error: "order_grouping", message: "This is an order grouping — act on its item bookings" });
     const first = db.prepare("SELECT MIN(date_from) AS starts FROM booking_lines WHERE booking_id = ?").get(booking.id) as { starts: string | null };
     if (!first.starts) return res.status(404).json({ error: "Booking has no lines" });
     res.json({ ...refundQuote(booking, first.starts), bookingRef: booking.ref });
@@ -203,7 +204,7 @@ bookingRouter.get("/bookings", requirePerm("bookings"), (req, res) => {
 
 bookingRouter.post("/bookings", requirePerm("bookings"), async (req, res) => {
   try {
-    const booking = await createBooking({
+    const booking = await createBookings({
       customer: req.body?.customer,
       storeId: req.body?.storeId,
       channel: req.body?.channel === "WEB" ? "WEB" : "STAFF",
@@ -371,6 +372,7 @@ bookingRouter.delete("/bookings/:id/id-photo", requireOwner, async (req, res) =>
 bookingRouter.post("/bookings/:id/push-pos", requirePerm("bookings"), async (req, res) => {
   try {
     const b = mustGet(req, req.params.id);
+    if (b.is_parent) return res.status(400).json({ error: "order_grouping", message: "This is an order grouping — act on its item bookings" });
     const lines = db.prepare("SELECT * FROM booking_lines WHERE booking_id = ?").all(b.id) as any[];
     const receiptNo = `WEB-${b.ref}`;
     const posMapping = posMappingForStore(b.store_id);
@@ -402,7 +404,14 @@ bookingRouter.post("/bookings/:id/reconcile", requirePerm("bookings"), (req, res
     if (!Number.isFinite(posTotal)) return res.status(400).json({ error: "posTotal (number) is required" });
     db.prepare("UPDATE bookings SET pos_total = ?, pos_receipt_no = COALESCE(NULLIF(?, ''), pos_receipt_no), status = CASE WHEN status IN ('RESERVED','POS_PENDING') THEN 'PAID' ELSE status END, updated_at = ? WHERE id = ?")
       .run(posTotal, String(req.body?.receiptNo ?? ""), now(), b.id);
-    void sendClassTicketEmail(b.id).catch((err) => console.warn("[ticketEmail]", err));
+    if (b.is_parent) {
+      const children = db.prepare("SELECT id FROM bookings WHERE parent_booking_id = ?").all(b.id) as { id: string }[];
+      for (const child of children) {
+        void sendClassTicketEmail(child.id).catch((err) => console.warn("[ticketEmail]", err));
+      }
+    } else {
+      void sendClassTicketEmail(b.id).catch((err) => console.warn("[ticketEmail]", err));
+    }
     emit(b.id, "booking.reconciled", { posTotal, originalTotal: b.total });
     res.json({ booking: serializeBooking(b.id) });
   } catch (err: any) {
@@ -541,6 +550,7 @@ bookingRouter.post("/bookings/:id/complete", requirePerm("bookings"), (req, res)
 bookingRouter.post("/bookings/:id/cancel", requirePerm("bookings"), async (req, res) => {
   try {
     const b = mustGet(req, req.params.id);
+    if (b.is_parent) return res.status(400).json({ error: "order_grouping", message: "This is an order grouping — act on its item bookings" });
     const first = db.prepare("SELECT MIN(date_from) AS starts FROM booking_lines WHERE booking_id = ?").get(b.id) as { starts: string | null };
     if (!first.starts) return res.status(404).json({ error: "Booking has no lines" });
     const quote = refundQuote(b, first.starts);
@@ -607,6 +617,7 @@ bookingRouter.post("/bookings/:id/check-in", requirePerm("bookings"), (req, res)
 bookingRouter.post("/bookings/:id/no-show", requirePerm("bookings"), async (req, res) => {
   try {
     const b = mustGet(req, req.params.id);
+    if (b.is_parent) return res.status(400).json({ error: "order_grouping", message: "This is an order grouping — act on its item bookings" });
     const at = now();
     db.prepare("UPDATE bookings SET no_show_at=?,updated_at=? WHERE id=?").run(at, at, b.id);
     emit(b.id, "booking.no_show", { reason: String(req.body?.reason || "") });
@@ -725,7 +736,7 @@ bookingRouter.get("/reports/bookings.csv", requirePerm("reports"), (req, res) =>
     )) AS timeline
     FROM bookings b
     LEFT JOIN stores s ON s.id=b.store_id
-    WHERE date(b.created_at) BETWEEN date(?) AND date(?)${storeCondition}
+    WHERE date(b.created_at) BETWEEN date(?) AND date(?) AND b.is_parent = 0${storeCondition}
     ORDER BY b.created_at DESC`).all(...params) as any[];
   const columns = ["booking_ref","status","type","channel","store","customer_email","customer_name","created_at",
     "subtotal","deposit","total","pos_total","refund_due","currency","pos_receipt_no","shopify_order_name",
@@ -744,7 +755,7 @@ bookingRouter.get("/reports/summary", requirePerm("reports"), (req, res) => {
     WHERE b.status!='CANCELLED' AND date(l.date_from) BETWEEN date(?) AND date(?)
     GROUP BY l.product_no,l.product_name ORDER BY sales DESC`).all(from, to);
   const totals = db.prepare(`SELECT COUNT(*) bookings,COALESCE(SUM(total),0) sales,
-    COALESCE(AVG(total),0) averageOrder FROM bookings WHERE status!='CANCELLED'
+    COALESCE(AVG(total),0) averageOrder FROM bookings WHERE status!='CANCELLED' AND is_parent = 0
     AND date(created_at) BETWEEN date(?) AND date(?)`).get(from, to);
   res.json({ from, to, totals, topServices });
 });
@@ -806,7 +817,7 @@ bookingRouter.get("/dashboard/today", (req, res) => {
   const stats = {
     activeRentals: (db.prepare(`SELECT COUNT(*) AS n FROM bookings WHERE status = 'PICKED_UP'${statsAccessCond}`).get(...statsParams) as any).n,
     // created_at is UTC ISO; 'localtime' folds it to the store's calendar day.
-    todayRevenue: (db.prepare(`SELECT COALESCE(SUM(total),0) AS n FROM bookings WHERE date(created_at, 'localtime') = date(?) AND status != 'CANCELLED'${statsAccessCond}`).get(today, ...statsParams) as any).n,
+    todayRevenue: (db.prepare(`SELECT COALESCE(SUM(total),0) AS n FROM bookings WHERE date(created_at, 'localtime') = date(?) AND status != 'CANCELLED' AND is_parent = 0${statsAccessCond}`).get(today, ...statsParams) as any).n,
     upcoming7d: (db.prepare(
       `SELECT COUNT(DISTINCT l.booking_id) AS n FROM booking_lines l JOIN bookings b ON b.id=l.booking_id
        WHERE date(l.date_from) BETWEEN date(?) AND date(?, '+7 day')${accessCond}`,
