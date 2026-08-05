@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, copyToClipboard } from "../api";
-import type { Booking, DamageRow, ExtensionRequest, ExtensionRequestsResponse, RentalUnit } from "../api";
-import { fmtDate, fmtDateTime, money } from "../format";
+import type { Booking, BookingLine, DamageRow, ExtensionRequest, ExtensionRequestsResponse, RentalUnit, Session } from "../api";
+import { fmtDate, fmtDateTime, isoToLocalInput, localToISO, money } from "../format";
 import { useStores } from "../components/StoreContext";
 import { useToast } from "../components/Toast";
 import { StatusPill } from "../components/StatusPill";
@@ -12,7 +12,7 @@ import { ScanButton } from "../components/BarcodeScanner";
 import { useI18n } from "../components/I18n";
 import { useAuth } from "../components/AuthGate";
 
-type ModalKind = "pickup" | "return" | "cancel" | "reconcile" | null;
+type ModalKind = "pickup" | "return" | "cancel" | "reconcile" | "reschedule" | null;
 type RefundQuote = {
   enabled: boolean;
   daysBefore: number;
@@ -37,7 +37,7 @@ export function BookingDetail() {
   const navigate = useNavigate();
   const toast = useToast();
   const { t } = useI18n();
-  const { storeName } = useStores();
+  const { stores, storeName } = useStores();
   const auth = useAuth();
 
   const [booking, setBooking] = useState<Booking | null>(null);
@@ -69,6 +69,14 @@ export function BookingDetail() {
   const [availableUnits, setAvailableUnits] = useState<Record<string, RentalUnit[]>>({});
   const [unitAssignments, setUnitAssignments] = useState<Record<string, string[]>>({});
   const [unitConditions, setUnitConditions] = useState<Record<string, string>>({});
+  const [rescheduleLine, setRescheduleLine] = useState<BookingLine | null>(null);
+  const [rescheduleFrom, setRescheduleFrom] = useState("");
+  const [rescheduleTo, setRescheduleTo] = useState("");
+  const [rescheduleStoreId, setRescheduleStoreId] = useState("");
+  const [rescheduleSessions, setRescheduleSessions] = useState<Session[]>([]);
+  const [rescheduleSessionsLoading, setRescheduleSessionsLoading] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState("");
+  const [rescheduleSessionId, setRescheduleSessionId] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
@@ -389,6 +397,58 @@ export function BookingDetail() {
     setPosTotal(b.posTotal != null ? String(b.posTotal) : String(b.total ?? ""));
     setReceiptNo(b.posReceiptNo ?? "");
     setModal("reconcile");
+  };
+  const openReschedule = (line: BookingLine) => {
+    setRescheduleLine(line);
+    setRescheduleError("");
+    if (line.type === "RENTAL" || line.type === "SERVICE") {
+      setRescheduleFrom(isoToLocalInput(line.from));
+      setRescheduleTo(isoToLocalInput(line.to));
+      setRescheduleStoreId(line.storeId);
+    } else {
+      setRescheduleSessionsLoading(true);
+      setRescheduleSessions([]);
+      setRescheduleSessionId("");
+      api<{ sessions: Session[] }>(`/api/sessions?from=${new Date().toISOString()}`)
+        .then(({ sessions }) => setRescheduleSessions(
+          sessions.filter((session) => session.productNo === line.productNo && session.id !== line.sessionId),
+        ))
+        .catch((e) => setRescheduleError(e instanceof Error ? e.message : "Could not load sessions"))
+        .finally(() => setRescheduleSessionsLoading(false));
+    }
+    setModal("reschedule");
+  };
+  const submitReschedule = async () => {
+    if (!rescheduleLine) return;
+    let body;
+    if (rescheduleLine.type === "RENTAL" || rescheduleLine.type === "SERVICE") {
+      body = {
+        lineId: rescheduleLine.id,
+        from: localToISO(rescheduleFrom),
+        to: localToISO(rescheduleTo),
+        storeId: rescheduleStoreId,
+      };
+    } else {
+      const session = rescheduleSessions.find((candidate) => candidate.id === rescheduleSessionId);
+      if (!session) return;
+      body = {
+        lineId: rescheduleLine.id,
+        sessionId: session.id,
+        from: session.startsAt,
+        to: session.endsAt,
+      };
+    }
+    setActing("Reschedule");
+    try {
+      const result = await api<{ booking: Booking }>(`/api/bookings/${id}/reschedule`, { method: "POST", body });
+      setBooking(result.booking);
+      toast.success("Rescheduled");
+      setModal(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Reschedule failed");
+    } finally {
+      setActing(null);
+    }
   };
 
   const events = [...b.events].sort((a, c) => (a.at < c.at ? 1 : -1));
@@ -777,6 +837,7 @@ export function BookingDetail() {
                 <th className="num">Unit price</th>
                 <th className="num">Line total</th>
                 <th>NAV refs</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -806,6 +867,13 @@ export function BookingDetail() {
                     {l.activityNo && l.bookingRef ? " · " : ""}
                     {l.bookingRef ? `Ref ${l.bookingRef}` : ""}
                     {!l.activityNo && !l.bookingRef && "—"}
+                  </td>
+                  <td>
+                    {(["RESERVED", "POS_PENDING", "PAID", "PICKED_UP"] as const).includes(b.status as "RESERVED" | "POS_PENDING" | "PAID" | "PICKED_UP") && (
+                      <button type="button" className="btn btn-sm" onClick={() => openReschedule(l)}>
+                        Reschedule
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -1283,6 +1351,78 @@ export function BookingDetail() {
               onChange={(e) => setReceiptNo(e.target.value)}
             />
           </Field>
+        </Modal>
+      )}
+
+      {modal === "reschedule" && rescheduleLine && (
+        <Modal
+          title="Reschedule"
+          onClose={() => setModal(null)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setModal(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={
+                  acting !== null
+                  || ((rescheduleLine.type === "RENTAL" || rescheduleLine.type === "SERVICE")
+                    ? !rescheduleFrom || !rescheduleTo || rescheduleTo <= rescheduleFrom
+                    : !rescheduleSessionId || Boolean(rescheduleError))
+                }
+                onClick={() => void submitReschedule()}
+              >
+                {acting === "Reschedule" && <Spinner small />} Reschedule
+              </button>
+            </>
+          }
+        >
+          {rescheduleLine.type === "RENTAL" || rescheduleLine.type === "SERVICE" ? (
+            <>
+              <Field label="From">
+                <input
+                  type="datetime-local"
+                  value={rescheduleFrom}
+                  onChange={(e) => setRescheduleFrom(e.target.value)}
+                />
+              </Field>
+              <Field label="To">
+                <input
+                  type="datetime-local"
+                  value={rescheduleTo}
+                  onChange={(e) => setRescheduleTo(e.target.value)}
+                />
+              </Field>
+              <Field label="Store">
+                <select value={rescheduleStoreId} onChange={(e) => setRescheduleStoreId(e.target.value)}>
+                  {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+                </select>
+              </Field>
+            </>
+          ) : rescheduleSessionsLoading ? (
+            <div><Spinner small /> Loading sessions…</div>
+          ) : rescheduleError ? (
+            <div className="error-note">{rescheduleError}</div>
+          ) : rescheduleSessions.length === 0 ? (
+            <EmptyState title="No other sessions available" />
+          ) : (
+            <Field label="Session">
+              <select value={rescheduleSessionId} onChange={(e) => setRescheduleSessionId(e.target.value)}>
+                <option value="">Select a session…</option>
+                {rescheduleSessions.map((session) => (
+                  <option
+                    key={session.id}
+                    value={session.id}
+                    disabled={session.booked + rescheduleLine.qty > session.capacity}
+                  >
+                    {`${fmtDateTime(session.startsAt)} — ${session.booked}/${session.capacity}`}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
         </Modal>
       )}
     </div>

@@ -64,3 +64,12 @@ export function localToISO(local: string): string {
   const d = new Date(local);
   return Number.isNaN(d.getTime()) ? "" : d.toISOString();
 }
+
+/** ISO string (Z-suffixed or naive) → datetime-local input value in browser-local time. */
+export function isoToLocalInput(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
