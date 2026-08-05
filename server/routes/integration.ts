@@ -10,12 +10,12 @@ import { Router, raw } from "express";
 import crypto from "node:crypto";
 import { db, getSettings, putSettings, pj, auditLog, uid, now, currentTenant, tenantALS } from "../db.js";
 import { navMode } from "../lib/nav.js";
-import { ensureMetafieldDefinitions, getShopifyCustomerEmail } from "../lib/shopifyAdmin.js";
+import { ensureMetafieldDefinitions, fetchShopifyOrder, getShopifyCustomerEmail } from "../lib/shopifyAdmin.js";
 import { bootstrapOpen, isAuthenticated, login, logout, requireOwner, staffAccess } from "../lib/auth.js";
 import { adminSession, listTenants, openTenantDb } from "../lib/platform.js";
 import { getStaffSession, staffTokenOf } from "../lib/staffSessions.js";
 import { collectCustomerData, redactCustomer, sweepRetention } from "../lib/privacy.js";
-import { BookingValidationError, createBookings } from "../lib/bookingService.js";
+import { BookingValidationError, createBookings, type serializeBooking } from "../lib/bookingService.js";
 import { quoteLines } from "../engine/pricing.js";
 import { rentalAvailability, courseSlots, serviceSlots } from "../engine/availability.js";
 import { encryptPasswordForSftp, sftpConfigured, testSftp } from "../lib/idPhotos.js";
@@ -228,6 +228,36 @@ settingsRouter.post("/shopify/setup", requireOwner, async (_req, res) => {
   }
 });
 
+settingsRouter.post("/shopify/orders/import", requireOwner, async (req, res) => {
+  const rawOrderId = String(req.body?.orderId ?? "").trim();
+  const orderId = /^\d+$/.test(rawOrderId) ? rawOrderId : rawOrderId.match(/(\d+)$/)?.[1];
+  if (!orderId) return res.status(400).json({ error: "orderId is required" });
+  try {
+    const order = await fetchShopifyOrder(orderId);
+    const result = await ingestShopifyOrder(order);
+    if (result.outcome === "created") {
+      if (!result.booking) throw new Error("Booking could not be loaded after import");
+      auditLog("shopify.order_imported", orderId, result.booking.ref);
+      return res.json({
+        ok: true,
+        outcome: "created",
+        ref: result.booking.ref,
+        bookingId: result.booking.id,
+        isParent: result.booking.isParent,
+        childRefs: result.booking.isParent ? result.booking.children.map((c: any) => c.ref) : [],
+      });
+    }
+    if (result.outcome === "already_imported") {
+      return res.json({ ok: true, outcome: "already_imported", bookingId: result.bookingId });
+    }
+    return res.status(200).json({ ok: false, outcome: "no_booking_lines" });
+  } catch (err) {
+    db.prepare("INSERT INTO events (booking_id, type, detail, at) VALUES (NULL, 'shopify.order_failed', ?, ?)")
+      .run(JSON.stringify({ orderId, error: String(err) }), new Date().toISOString());
+    return res.status(502).json({ error: String((err as Error).message ?? err) });
+  }
+});
+
 settingsRouter.get("/events", requireOwner, (req, res) => {
   const { bookingId, limit } = req.query as Record<string, string>;
   const rows = bookingId
@@ -268,6 +298,105 @@ function verifyShopifyHmac(rawBody: Buffer, hmacHeader: string, secret: string):
   }
 }
 
+type IngestOrderResult =
+  | { outcome: "created"; booking: ReturnType<typeof serializeBooking> }
+  | { outcome: "already_imported"; bookingId: string }
+  | { outcome: "no_booking_lines" };
+
+async function ingestShopifyOrder(order: any): Promise<IngestOrderResult> {
+  const noShowBookingId = order.note_attributes?.find((a: any) => a.name === "reservly_noshow_ref")?.value
+    || order.line_items?.flatMap((item: any) => item.properties ?? [])
+      .find((p: any) => p.name === "reservly_noshow_ref")?.value;
+  if (noShowBookingId) {
+    const booking = db.prepare("SELECT id,ref,no_show_fee_status FROM bookings WHERE id=?").get(String(noShowBookingId)) as any;
+    if (booking && ["INVOICED", "PENDING_PAYMENT"].includes(booking.no_show_fee_status)) {
+      db.prepare("UPDATE bookings SET no_show_fee_status='PAID',updated_at=? WHERE id=?").run(now(), booking.id);
+      auditLog("booking.no_show_fee_paid", booking.ref, `Shopify order ${String(order.id ?? "")}`, "shopify");
+    }
+  }
+
+  const extensionRequestId = order.note_attributes?.find((a: any) => a.name === "reservly_extension_id")?.value
+    || order.line_items?.[0]?.properties?.find((p: any) => p.name === "reservly_extension_id")?.value;
+  if (extensionRequestId) {
+    try {
+      const { applyPaidExtension } = await import("../lib/extensions.js");
+      await applyPaidExtension(extensionRequestId);
+    } catch (err) {
+      console.error("[extensions] applyPaidExtension failed:", err);
+    }
+  }
+
+  const existing = db.prepare("SELECT id FROM bookings WHERE shopify_order_id = ? AND status != 'CANCELLED'").get(String(order.id)) as any;
+  if (existing) return { outcome: "already_imported", bookingId: existing.id };
+
+  const lines: any[] = [];
+  const addons: any[] = [];
+  const bookingProperties: Record<string, string> = {};
+  const bookingLineProperties: Record<string, string>[] = [];
+  for (const item of order.line_items ?? []) {
+    const props: Record<string, string> = Object.fromEntries((item.properties ?? []).map((p: any) => [p.name, String(p.value)]));
+    if (props._booking_addon_for) {
+      addons.push({
+        productNo: props._addon_product_no || item.sku || String(item.product_id),
+        name: item.title || item.name || "Booking add-on", qty: item.quantity || 1,
+        unitPrice: Number(item.price) || 0, shopifyVariantId: String(item.variant_id || ""),
+      });
+      continue;
+    }
+    if (!props._booking_type || props._cross_sell === "1") continue; // plain retail item OR cross-sell product
+    Object.assign(bookingProperties, props);
+    bookingLineProperties.push(props);
+    if (props._booking_type === "RENTAL") {
+      lines.push({ type: "RENTAL", productNo: props._product_no, storeId: props._store_id, from: props._from, to: props._to, qty: item.quantity || 1, holdToken: props._hold_token });
+    } else if (props._booking_type === "COURSE") {
+      lines.push({ type: "COURSE", sessionId: props._session_id, qty: item.quantity || 1, holdToken: props._hold_token });
+    } else if (props._booking_type === "SERVICE") {
+      lines.push({ type: "SERVICE", productNo: props._product_no, storeId: props._store_id, from: props._from, to: props._to, qty: item.quantity || 1, holdToken: props._hold_token });
+    }
+  }
+  if (!lines.length) return { outcome: "no_booking_lines" };
+
+  const isB2B = (order.customer?.tags ?? "").split(",").map((t: string) => t.trim().toUpperCase()).includes("B2B");
+  const paid = order.financial_status === "paid"; // B2B pay-later arrives 'pending'
+  const settings = getSettings();
+  const termsAccepted = bookingLineProperties.every((props) => {
+    const key = `terms${props._booking_type[0]}${props._booking_type.slice(1).toLowerCase()}Enabled`;
+    return settings[key] !== "1" || String(props._terms_accepted).toLowerCase() === "true";
+  });
+  const booking = await createBookings({
+    customer: {
+      email: order.email || order.customer?.email || "unknown@web",
+      firstName: order.customer?.first_name, lastName: order.customer?.last_name,
+      phone: order.customer?.phone, b2b: isB2B,
+    },
+    storeId: lines.find((l) => l.storeId)?.storeId,
+    channel: "WEB",
+    lines,
+    shopifyOrderId: String(order.id),
+    shopifyOrderName: order.name,
+    paid,
+    holdToken: lines.find((l) => l.holdToken)?.holdToken,
+    fieldResponses: Object.fromEntries(Object.entries(bookingProperties)
+      .filter(([key]) => key.startsWith("_field_") || key.startsWith("_intake_"))
+      .map(([key, value]) => [key.startsWith("_field_") ? key.slice(7) : key.slice(8), value])),
+    termsAccepted,
+    enforceTerms: false,
+    enforcePolicy: false,
+    enforceShipping: false,
+    addons,
+    fulfillment: bookingProperties._fulfillment,
+    shipAddress: bookingProperties._ship_address,
+  });
+  if (booking.isParent) {
+    for (const child of booking.children) {
+      void sendClassTicketEmail(child.id).catch((err) => console.warn("[ticketEmail]", err));
+    }
+  } else {
+    void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
+  }
+  return { outcome: "created", booking };
+}
+
 shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
   const secret = getSettings().shopifyApiSecret;
   const hmac = String(req.headers["x-shopify-hmac-sha256"] ?? "");
@@ -285,95 +414,7 @@ shopifyRouter.post("/orders-create", raw({ type: "*/*" }), async (req, res) => {
   res.status(200).json({ ok: true });
 
   try {
-    const noShowBookingId = order.note_attributes?.find((a: any) => a.name === "reservly_noshow_ref")?.value
-      || order.line_items?.flatMap((item: any) => item.properties ?? [])
-        .find((p: any) => p.name === "reservly_noshow_ref")?.value;
-    if (noShowBookingId) {
-      const booking = db.prepare("SELECT id,ref,no_show_fee_status FROM bookings WHERE id=?").get(String(noShowBookingId)) as any;
-      if (booking && ["INVOICED", "PENDING_PAYMENT"].includes(booking.no_show_fee_status)) {
-        db.prepare("UPDATE bookings SET no_show_fee_status='PAID',updated_at=? WHERE id=?").run(now(), booking.id);
-        auditLog("booking.no_show_fee_paid", booking.ref, `Shopify order ${String(order.id ?? "")}`, "shopify");
-      }
-    }
-
-    const extensionRequestId = order.note_attributes?.find((a: any) => a.name === "reservly_extension_id")?.value
-      || order.line_items?.[0]?.properties?.find((p: any) => p.name === "reservly_extension_id")?.value;
-    if (extensionRequestId) {
-      try {
-        const { applyPaidExtension } = await import("../lib/extensions.js");
-        await applyPaidExtension(extensionRequestId);
-      } catch (err) {
-        console.error("[extensions] applyPaidExtension failed:", err);
-      }
-    }
-
-    const existing = db.prepare("SELECT id FROM bookings WHERE shopify_order_id = ? AND status != 'CANCELLED'").get(String(order.id)) as any;
-    if (existing) return;
-
-    const lines: any[] = [];
-    const addons: any[] = [];
-    const bookingProperties: Record<string, string> = {};
-    const bookingLineProperties: Record<string, string>[] = [];
-    for (const item of order.line_items ?? []) {
-      const props: Record<string, string> = Object.fromEntries((item.properties ?? []).map((p: any) => [p.name, String(p.value)]));
-      if (props._booking_addon_for) {
-        addons.push({
-          productNo: props._addon_product_no || item.sku || String(item.product_id),
-          name: item.title || item.name || "Booking add-on", qty: item.quantity || 1,
-          unitPrice: Number(item.price) || 0, shopifyVariantId: String(item.variant_id || ""),
-        });
-        continue;
-      }
-      if (!props._booking_type || props._cross_sell === "1") continue; // plain retail item OR cross-sell product
-      Object.assign(bookingProperties, props);
-      bookingLineProperties.push(props);
-      if (props._booking_type === "RENTAL") {
-        lines.push({ type: "RENTAL", productNo: props._product_no, storeId: props._store_id, from: props._from, to: props._to, qty: item.quantity || 1, holdToken: props._hold_token });
-      } else if (props._booking_type === "COURSE") {
-        lines.push({ type: "COURSE", sessionId: props._session_id, qty: item.quantity || 1, holdToken: props._hold_token });
-      } else if (props._booking_type === "SERVICE") {
-        lines.push({ type: "SERVICE", productNo: props._product_no, storeId: props._store_id, from: props._from, to: props._to, qty: item.quantity || 1, holdToken: props._hold_token });
-      }
-    }
-    if (!lines.length) return;
-
-    const isB2B = (order.customer?.tags ?? "").split(",").map((t: string) => t.trim().toUpperCase()).includes("B2B");
-    const paid = order.financial_status === "paid"; // B2B pay-later arrives 'pending'
-    const settings = getSettings();
-    const termsAccepted = bookingLineProperties.every((props) => {
-      const key = `terms${props._booking_type[0]}${props._booking_type.slice(1).toLowerCase()}Enabled`;
-      return settings[key] !== "1" || String(props._terms_accepted).toLowerCase() === "true";
-    });
-    const booking = await createBookings({
-      customer: {
-        email: order.email || order.customer?.email || "unknown@web",
-        firstName: order.customer?.first_name, lastName: order.customer?.last_name,
-        phone: order.customer?.phone, b2b: isB2B,
-      },
-      storeId: lines.find((l) => l.storeId)?.storeId,
-      channel: "WEB",
-      lines,
-      shopifyOrderId: String(order.id),
-      shopifyOrderName: order.name,
-      paid,
-      holdToken: lines.find((l) => l.holdToken)?.holdToken,
-      fieldResponses: Object.fromEntries(Object.entries(bookingProperties)
-        .filter(([key]) => key.startsWith("_field_") || key.startsWith("_intake_"))
-        .map(([key, value]) => [key.startsWith("_field_") ? key.slice(7) : key.slice(8), value])),
-      termsAccepted,
-      enforceTerms: false,
-      enforceShipping: false,
-      addons,
-      fulfillment: bookingProperties._fulfillment,
-      shipAddress: bookingProperties._ship_address,
-    });
-    if (booking.isParent) {
-      for (const child of booking.children) {
-        void sendClassTicketEmail(child.id).catch((err) => console.warn("[ticketEmail]", err));
-      }
-    } else {
-      void sendClassTicketEmail(booking.id).catch((err) => console.warn("[ticketEmail]", err));
-    }
+    await ingestShopifyOrder(order);
   } catch (err) {
     db.prepare("INSERT INTO events (booking_id, type, detail, at) VALUES (NULL, 'shopify.order_failed', ?, ?)")
       .run(JSON.stringify({ orderId: order?.id, error: String(err) }), new Date().toISOString());

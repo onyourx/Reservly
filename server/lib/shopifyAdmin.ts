@@ -66,6 +66,18 @@ export async function shopifyGql<T = any>(query: string, variables: Record<strin
   return body.data as T;
 }
 
+export async function fetchShopifyOrder(orderId: string): Promise<any> {
+  const { shop, token } = await getToken();
+  const res = await fetch(`https://${shop}/admin/api/${API_VERSION}/orders/${encodeURIComponent(orderId)}.json`, {
+    headers: { "X-Shopify-Access-Token": token },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (res.status === 404) throw new Error("Order not found on " + shop);
+  if (!res.ok) throw new Error(`Shopify order request failed (HTTP ${res.status})`);
+  const json = (await res.json()) as { order: any };
+  return json.order;
+}
+
 /** Resolve a Shopify customer ID to an email without allowing Admin API
  * configuration or availability issues to break storefront requests. */
 export async function getShopifyCustomerEmail(customerId: string): Promise<string | null> {

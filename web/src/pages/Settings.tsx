@@ -68,6 +68,8 @@ export function SettingsPage() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [settingUp, setSettingUp] = useState(false);
+  const [importOrderId, setImportOrderId] = useState("");
+  const [importingOrder, setImportingOrder] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [stores, setStores] = useState<Store[]>([]);
@@ -287,6 +289,19 @@ export function SettingsPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Setup failed");
     } finally { setSettingUp(false); }
+  };
+  const importShopifyOrder = async () => {
+    setImportingOrder(true);
+    try {
+      const result = await api<{ ok: boolean; outcome: "created" | "already_imported" | "no_booking_lines"; ref?: string }>("/api/shopify/orders/import", { body: { orderId: importOrderId } });
+      if (result.outcome === "created") toast.success(`Imported as ${result.ref}`);
+      else if (result.outcome === "already_imported") toast.success("Order already imported");
+      else toast.error("No booking items on that order");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImportingOrder(false);
+    }
   };
   const testConnection = async () => {
     setTesting(true);
@@ -752,6 +767,11 @@ export function SettingsPage() {
           <hr className="divider" /><h3 className="card-title">Shopify store setup</h3>
           <div className="faint">Creates the <span className="mono">booking.type</span> and <span className="mono">booking.product_no</span> product metafield definitions the storefront widget reads. Idempotent — safe to re-run.</div>
           <button type="button" className="btn" disabled={settingUp} onClick={() => void setupShopify()}>{settingUp && <Spinner small />} Set up metafield definitions</button>
+          <hr className="divider" />
+          <h3 className="card-title">Import order</h3>
+          <div className="faint">Re-import a paid Shopify order that didn't create a booking — enter the numeric order ID from the order's admin URL.</div>
+          <input value={importOrderId} onChange={(e) => setImportOrderId(e.target.value)} placeholder="e.g. 6808901419110" />
+          <button type="button" className="btn" disabled={importingOrder} onClick={() => void importShopifyOrder()}>{importingOrder && <Spinner small />} Import order</button>
         </>, 4)}</div>
         <div className="card"><h2 className="card-title">{t("Zoom")}</h2>{fields(<>
           <Field label="Zoom account ID"><input value={settings.zoomAccountId} onChange={(e) => set("zoomAccountId", e.target.value)} /></Field>

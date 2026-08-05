@@ -40,6 +40,7 @@ export interface CreateBookingInput {
   fieldResponses?: Record<string, unknown>;
   termsAccepted?: boolean;
   enforceTerms?: boolean;
+  enforcePolicy?: boolean;
   enforceShipping?: boolean;
   fulfillment?: "PICKUP" | "SHIP" | string;
   shipAddress?: string;
@@ -55,7 +56,18 @@ export async function createBooking(input: CreateBookingInput) {
   for (const line of quoted.lines) {
     if (line.type !== "RENTAL") continue;
     const validation = validateRentalWindow(line.from, line.to);
-    if (!validation.ok) throw new Error(validation.error);
+    if (!validation.ok) {
+      if (input.enforcePolicy === false) {
+        auditLog("policy.violation_on_paid_order", String(input.shopifyOrderId ?? ""), validation.error);
+        console.warn("[bookingService] Rental policy violation on paid order; creating booking", {
+          shopifyOrderId: input.shopifyOrderId,
+          productNo: line.productNo,
+          error: validation.error,
+        });
+        continue;
+      }
+      throw new Error(validation.error);
+    }
   }
   for (const line of quoted.lines) {
     if (line.type !== "SERVICE") continue;
